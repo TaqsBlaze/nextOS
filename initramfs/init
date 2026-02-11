@@ -1,0 +1,12 @@
+#!/bin/sh
+
+echo "Halo OS initramfs starting..."
+
+mount -t proc none /proc
+mount -t sysfs none /sys
+mount -t devtmpfs none /dev
+
+echo "Initramfs environment ready"
+echo "Dropping to shell..."
+
+exec /bin/sh

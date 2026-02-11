@@ -1,0 +1,4 @@
+linux-6.19/
+*.iso
+busybox
+vmlinuz
