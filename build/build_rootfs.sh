@@ -5,7 +5,7 @@ set -e
 ROOTFS_DIR=rootfs
 OUT_IMG=boot/rootfs.img
 
-echo "Building Halo OS root filesystem..."
+echo "Building Next OS root filesystem..."
 
 # Remove old image if exists
 rm -f "$OUT_IMG"

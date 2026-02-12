@@ -2,7 +2,7 @@
 set -e
 
 echo "==============================="
-echo "Halo OS Full Build Script"
+echo "next OS Full Build Script"
 echo "==============================="
 
 # -------------------------------
@@ -13,7 +13,7 @@ INITRAMFS_DIR=initramfs
 BOOT_DIR=boot
 ISO_DIR=iso
 MNT_DIR=build/mnt
-ISO_OUT=Halo-OS-v1.iso
+ISO_OUT=Next-OS.iso
 IMG_SIZE=60M
 
 # -------------------------------
@@ -64,7 +64,7 @@ if [ ! -f "$ISO_DIR/boot/grub/grub.cfg" ]; then
 set timeout=3
 set default=0
 
-menuentry "GlassOS" {
+menuentry "Next OS" {
     linux /boot/vmlinuz
     initrd /boot/initramfs.img
 }
@@ -82,4 +82,4 @@ grub-mkrescue -o "$ISO_OUT" "$ISO_DIR" || {
 }
 echo "ISO build complete: $ISO_OUT"
 echo "==============================="
-echo "GlassOS build finished successfully!"
+echo "nextOS build finished successfully!"

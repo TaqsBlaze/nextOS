@@ -3,7 +3,7 @@
 set -e
 
 ISO_DIR=iso
-OUT=glassos.iso
+OUT=nextOS.iso
 
 if [ ! -f boot/vmlinuz ]; then
   echo "ERROR: kernel (boot/vmlinuz) not found."
