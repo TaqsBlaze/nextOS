@@ -1,1 +1,1 @@
-![icon](https://raw.githubusercontent.com/TaqsBlaze/amen-cli/refs/heads/main/image/icon.png)
+![icon](https://github.com/TaqsBlaze/nextOS/blob/main/banner/nexOS2.png)
