@@ -73,24 +73,16 @@ cd "$PROJECT_DIR"
 
 echo "Initramfs created."
 
-# -----------------------------
-# 5️ Build rootfs image
-# -----------------------------
-echo "[5/6] Creating rootfs image..."
+# Note: Rootfs image creation requires sudo/loop device
+# For now, we boot from initramfs only (RAM-based root)
+# To create rootfs.img, run:
+#   sudo dd if=/dev/zero of=boot/rootfs.img bs=1M count=120
+#   sudo mkfs.ext4 -F boot/rootfs.img
+#   sudo mount -o loop boot/rootfs.img build/mnt
+#   sudo cp -a rootfs/. build/mnt/
+#   sudo umount build/mnt
 
-rm -f "$BOOT_DIR/rootfs.img"
-mkdir -p "$MNT_DIR"
-
-dd if=/dev/zero of="$BOOT_DIR/rootfs.img" bs=1M count=120
-mkfs.ext4 -F "$BOOT_DIR/rootfs.img"
-
-mount -o loop "$BOOT_DIR/rootfs.img" "$MNT_DIR"
-cp -a "$ROOTFS_DIR/." "$MNT_DIR/"
-chown -R root:root "$MNT_DIR"
-umount "$MNT_DIR"
-rmdir "$MNT_DIR"
-
-echo "Rootfs image ready."
+echo "[5/6] Skipping rootfs image (using initramfs-only boot)..."
 
 # -----------------------------
 # 6️ Build ISO
@@ -103,10 +95,15 @@ cp "$BOOT_DIR/vmlinuz" "$ISO_DIR/boot/"
 cp "$BOOT_DIR/initramfs.img" "$ISO_DIR/boot/"
 
 cat > "$ISO_DIR/boot/grub/grub.cfg" <<EOF
-set timeout=3
+set timeout=5
 set default=0
 
-menuentry "Next OS" {
+menuentry "NextOS" {
+    linux /boot/vmlinuz root=/dev/ram0 rw quiet
+    initrd /boot/initramfs.img
+}
+
+menuentry "NextOS (Verbose)" {
     linux /boot/vmlinuz root=/dev/ram0 rw
     initrd /boot/initramfs.img
 }

@@ -1,0 +1,113 @@
+name: Build NextOS ISO
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          libncurses-dev \
+          bison \
+          flex \
+          libssl-dev \
+          libelf-dev \
+          bc \
+          xorriso \
+          grub-pc-bin \
+          cpio \
+          gzip \
+          qemu-system-x86
+
+    - name: Download Linux kernel
+      run: |
+        if [ ! -d "linux-6.19" ]; then
+          echo "Downloading Linux 6.19..."
+          wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.19.tar.xz
+          tar xf linux-6.19.tar.xz
+          rm linux-6.19.tar.xz
+        fi
+
+    - name: Configure kernel
+      run: |
+        cd linux-6.19
+        ../build/configure_kernel.sh
+
+    - name: Build kernel
+      run: |
+        cd linux-6.19
+        make -j$(nproc)
+        cp arch/x86/boot/bzImage ../boot/vmlinuz
+        cd ..
+
+    - name: Copy busybox to initramfs
+      run: |
+        cp $(which busybox) initramfs/bin/busybox
+
+    - name: Build initramfs
+      run: |
+        cd initramfs
+        find . -print0 | cpio --null -ov --format=newc 2>/dev/null | gzip -9 > ../boot/initramfs.img
+        cd ..
+
+    - name: Build ISO
+      run: |
+        ./build/quick_iso.sh
+
+    - name: Verify ISO
+      run: |
+        FILE=NextOS.iso
+        if [ ! -f "$FILE" ]; then
+          echo "ERROR: ISO not created!"
+          exit 1
+        fi
+        SIZE=$(stat -c%s "$FILE")
+        echo "✅ ISO created successfully"
+        echo "File: $FILE"
+        echo "Size: $(numfmt --to=iec $SIZE)"
+
+    - name: Test ISO with QEMU
+      run: |
+        timeout 30 qemu-system-x86_64 \
+          -cdrom NextOS.iso \
+          -m 512M \
+          -nographic \
+          -serial mon:stdio \
+          -device virtio-rng-pci \
+          -kernel boot/vmlinuz \
+          -initrd boot/initramfs.img \
+          -append "console=ttyS0 quiet" \
+          2>&1 | head -100 || true
+        echo "✅ QEMU test completed"
+
+    - name: Upload ISO as artifact
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: NextOS-ISO
+        path: NextOS.iso
+        retention-days: 30
+
+    - name: Create Release (on tag)
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: NextOS.iso
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

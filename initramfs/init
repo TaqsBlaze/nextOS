@@ -1,12 +1,33 @@
 #!/bin/sh
 
-echo "Halo OS initramfs starting..."
+echo "NextOS initramfs starting..."
 
-mount -t proc none /proc
-mount -t sysfs none /sys
-mount -t devtmpfs none /dev
+# Create essential directories
+mkdir -p /proc /sys /dev /etc /root /tmp /var/run
 
-echo "Initramfs environment ready"
-echo "Dropping to shell..."
+# Mount essential filesystems (may already be mounted by kernel)
+[ -e /proc/version ] || mount -t proc proc /proc 2>/dev/null
+[ -e /sys/kernel ] || mount -t sysfs sysfs /sys 2>/dev/null
+[ -e /dev/null ] || mount -t devtmpfs devtmpfs /dev 2>/dev/null || mount -t tmpfs tmpfs /dev 2>/dev/null
 
-exec /bin/sh
+echo ""
+echo "========================================="
+echo "NextOS Initramfs - Ready for interaction"
+echo "========================================="
+echo ""
+echo "Filesystem mounted:"
+mount | grep -E "proc|sys|dev|root"
+echo ""
+echo "Available commands:"
+ls /bin | head -10
+echo ""
+echo "Type 'ls /' to explore, 'exit' to shutdown"
+echo ""
+
+# Try to find a shell
+if [ -x /bin/sh ]; then
+    exec /bin/sh
+else
+    echo "ERROR: No shell found!"
+    panic
+fi

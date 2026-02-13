@@ -11,7 +11,13 @@ if [ ! -f boot/vmlinuz ]; then
   exit 1
 fi
 
-mkdir -p iso/boot
+if [ ! -f boot/initramfs.img ]; then
+  echo "ERROR: initramfs (boot/initramfs.img) not found."
+  echo "ISO cannot be built without an initramfs."
+  exit 1
+fi
+
+mkdir -p iso/boot/grub
 
 cp boot/vmlinuz iso/boot/
 cp boot/initramfs.img iso/boot/
