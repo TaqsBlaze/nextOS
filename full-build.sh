@@ -23,11 +23,11 @@ KERNEL_VERSION="6.19"
 # -----------------------------
 # 1️ Build Kernel
 # -----------------------------
-# echo "[1/6] Building kernel..."
+echo "[1/6] Building kernel..."
 # cd "$KERNEL_DIR"
 
 # make olddefconfig
-# make -j$(nproc)
+# make -j$(nproc) all
 
 # cp arch/x86/boot/bzImage "$BOOT_DIR/vmlinuz"
 
@@ -73,29 +73,29 @@ KERNEL_VERSION="6.19"
 
 # echo "Initramfs created."
 
-# # -----------------------------
-# # 5️ Build rootfs image
-# # -----------------------------
-# echo "[5/6] Creating rootfs image..."
+# -----------------------------
+# 5️ Build rootfs image
+# -----------------------------
+echo "[5/6] Creating rootfs image..."
 
-# rm -f "$BOOT_DIR/rootfs.img"
-# mkdir -p "$MNT_DIR"
+rm -f "$BOOT_DIR/rootfs.img"
+mkdir -p "$MNT_DIR"
 
-# dd if=/dev/zero of="$BOOT_DIR/rootfs.img" bs=1M count=120
-# mkfs.ext4 -F "$BOOT_DIR/rootfs.img"
+dd if=/dev/zero of="$BOOT_DIR/rootfs.img" bs=1M count=120
+mkfs.ext4 -F "$BOOT_DIR/rootfs.img"
 
-# mount -o loop "$BOOT_DIR/rootfs.img" "$MNT_DIR"
-# cp -a "$ROOTFS_DIR/." "$MNT_DIR/"
-# chown -R root:root "$MNT_DIR"
-# umount "$MNT_DIR"
-# rmdir "$MNT_DIR"
+mount -o loop "$BOOT_DIR/rootfs.img" "$MNT_DIR"
+cp -a "$ROOTFS_DIR/." "$MNT_DIR/"
+chown -R root:root "$MNT_DIR"
+umount "$MNT_DIR"
+rmdir "$MNT_DIR"
 
-# echo "Rootfs image ready."
+echo "Rootfs image ready."
 
-# # -----------------------------
-# # 6️ Build ISO
-# # -----------------------------
-# echo "[6/6] Building ISO..."
+# -----------------------------
+# 6️ Build ISO
+# -----------------------------
+echo "[6/6] Building ISO..."
 
 mkdir -p "$ISO_DIR/boot/grub"
 
@@ -103,7 +103,7 @@ cp "$BOOT_DIR/vmlinuz" "$ISO_DIR/boot/"
 cp "$BOOT_DIR/initramfs.img" "$ISO_DIR/boot/"
 
 cat > "$ISO_DIR/boot/grub/grub.cfg" <<EOF
-set timeout=5
+set timeout=10
 set default=0
 
 menuentry "Next OS" {
