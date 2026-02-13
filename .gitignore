@@ -1,7 +1,53 @@
-linux-6.19/
-rootfs/
-boot/
+# Build artifacts
 *.iso
+<<<<<<< HEAD
 *.img
 busybox
 vmlinuz
+=======
+*.vdi
+*.vbox
+*.vbox-prev
+
+# Kernel build
+linux-6.19/
+
+# Boot artifacts
+boot/vmlinuz
+boot/initramfs.img
+boot/rootfs.img
+
+# Build directories
+build/mnt/
+build/grub.*/
+
+# VirtualBox VM
+NextOS/
+
+# ISO staging
+iso/boot/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.directory
+
+# Temporary
+/tmp/
+*.tmp
+*.log
+
+# Test artifacts
+/test_initramfs/
+>>>>>>> d336ec61b5b86540d29d1ad2bc8fdb639693e5e9

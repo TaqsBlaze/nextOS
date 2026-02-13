@@ -2,7 +2,7 @@
 set -e
 
 echo "==============================="
-echo "next OS Full Build Script"
+echo "NextOS Full Build Script"
 echo "==============================="
 
 # -------------------------------
@@ -53,19 +53,22 @@ echo "Initramfs image created: $BOOT_DIR/initramfs.img"
 # 4️⃣ Prepare ISO staging
 # -------------------------------
 echo "[3/4] Preparing ISO staging area..."
-mkdir -p "$ISO_DIR/boot"
+mkdir -p "$ISO_DIR/boot/grub"
 cp -f "$BOOT_DIR/vmlinuz" "$ISO_DIR/boot/"
 cp -f "$BOOT_DIR/initramfs.img" "$ISO_DIR/boot/"
-cp -r "$ISO_DIR/boot" "$ISO_DIR/boot" 2>/dev/null || true
 # Make sure grub.cfg exists
 if [ ! -f "$ISO_DIR/boot/grub/grub.cfg" ]; then
-    mkdir -p "$ISO_DIR/boot/grub"
     cat > "$ISO_DIR/boot/grub/grub.cfg" <<EOF
-set timeout=3
+set timeout=5
 set default=0
 
-menuentry "Next OS" {
-    linux /boot/vmlinuz
+menuentry "NextOS" {
+    linux /boot/vmlinuz root=/dev/ram0 rw quiet
+    initrd /boot/initramfs.img
+}
+
+menuentry "NextOS (Verbose)" {
+    linux /boot/vmlinuz root=/dev/ram0 rw
     initrd /boot/initramfs.img
 }
 EOF
@@ -82,4 +85,4 @@ grub-mkrescue -o "$ISO_OUT" "$ISO_DIR" || {
 }
 echo "ISO build complete: $ISO_OUT"
 echo "==============================="
-echo "nextOS build finished successfully!"
+echo "NextOS build finished successfully!"
