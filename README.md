@@ -3,7 +3,7 @@
 
 # NextOS
 
-NextOS is a **minimal, performance-focused Linux-based operating system** built entirely from source.
+NextOS is a **minimal, performance focused Linux based operating system** built entirely from source.
 
 Its goal is to explore **modern kernel optimization, lightweight system architecture, and controlled userspace design** while maintaining clarity and engineering discipline.
 
@@ -13,12 +13,12 @@ Its goal is to explore **modern kernel optimization, lightweight system architec
 NextOS is designed around:
 
 * **Minimalism**
-* **Performance-first design**
+* **Performance first design**
 * **Low memory footprint**
 * **Fast boot**
 * **Transparent system architecture**
 * **Educational clarity**
-* **Security-conscious defaults**
+* **Security conscious defaults**
 
 
 
