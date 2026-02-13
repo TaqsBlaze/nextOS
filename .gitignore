@@ -2,5 +2,6 @@ linux-6.19/
 rootfs/
 boot/
 *.iso
+*.img
 busybox
 vmlinuz
