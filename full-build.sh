@@ -45,20 +45,20 @@ cd "$PROJECT_DIR"
 # -----------------------------
 echo "[3/6] Installing bash into rootfs..."
 
-sudo mkdir -p "$ROOTFS_DIR/bin"
-sudo cp /bin/bash "$ROOTFS_DIR/bin/"
+mkdir -p "$ROOTFS_DIR/bin"
+cp /bin/bash "$ROOTFS_DIR/bin/"
 
 # Copy required libraries
 for lib in $(ldd /bin/bash | awk '{print $3}' | grep "/"); do
-    sudo mkdir -p "$ROOTFS_DIR$(dirname $lib)"
-    sudo cp "$lib" "$ROOTFS_DIR$lib"
+    mkdir -p "$ROOTFS_DIR$(dirname $lib)"
+    cp "$lib" "$ROOTFS_DIR$lib"
 done
 
 # Add basic filesystem structure
-sudo mkdir -p "$ROOTFS_DIR"/{dev,proc,sys,etc}
+mkdir -p "$ROOTFS_DIR"/{dev,proc,sys,etc}
 
 # Create minimal passwd
-echo "root:x:0:0:root:/root:/bin/bash" | sudo tee "$ROOTFS_DIR/etc/passwd"
+echo "root:x:0:0:root:/root:/bin/bash" | tee "$ROOTFS_DIR/etc/passwd"
 
 echo "Bash installed."
 
@@ -84,10 +84,10 @@ mkdir -p "$MNT_DIR"
 dd if=/dev/zero of="$BOOT_DIR/rootfs.img" bs=1M count=120
 mkfs.ext4 -F "$BOOT_DIR/rootfs.img"
 
-sudo mount -o loop "$BOOT_DIR/rootfs.img" "$MNT_DIR"
-sudo cp -a "$ROOTFS_DIR/." "$MNT_DIR/"
-sudo chown -R root:root "$MNT_DIR"
-sudo umount "$MNT_DIR"
+mount -o loop "$BOOT_DIR/rootfs.img" "$MNT_DIR"
+cp -a "$ROOTFS_DIR/." "$MNT_DIR/"
+chown -R root:root "$MNT_DIR"
+umount "$MNT_DIR"
 rmdir "$MNT_DIR"
 
 echo "Rootfs image ready."
