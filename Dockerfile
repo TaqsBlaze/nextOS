@@ -12,6 +12,7 @@ RUN apt update && apt install -y --no-install-recommends \
     libncurses-dev \
     dwarves \
     ca-certificates \
+    sudo \
     && rm -rf /var/lib/apt/lists/*
 
 CMD ["bash"]
