@@ -13,6 +13,10 @@ RUN apt update && apt install -y --no-install-recommends \
     dwarves \
     ca-certificates \
     sudo \
+    build-essential \
+    grub-pc-bin \
+    grub-efi-amd64-bin \
+    xorriso mtools \
     && rm -rf /var/lib/apt/lists/*
 
 CMD ["bash"]

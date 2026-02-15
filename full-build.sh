@@ -78,8 +78,8 @@ BOOT_DIR="$PROJECT_DIR/boot"
 ISO_DIR="$PROJECT_DIR/iso"
 BUILD_DIR="$PROJECT_DIR/build"
 MNT_DIR="$BUILD_DIR/mnt"
-GRUB_SRC="$PROJECT_DIR/grub"
-BANNER_SRC="$PROJECT_DIR/banner/nexOS2.png"
+GRUB_SRC="$PROJECT_DIR/iso/boot/grub"
+BANNER_SRC="$PROJECT_DIR/banner/nextOS2.png"
 ISO_OUT="$PROJECT_DIR/Next-OS.iso"
 
 # =============================================================
@@ -252,12 +252,51 @@ if [ "$DO_CLEAN" = "1" ]; then
 fi
 
 # ── Prerequisite check ────────────────────────────────────────
+# Map: command -> apt package(s) that provide it
+declare -A PKG_MAP=(
+    [make]="build-essential"
+    [cpio]="cpio"
+    [gzip]="gzip"
+    [grub-mkrescue]="grub-pc-bin grub-efi-amd64-bin grub-common"
+    [xorriso]="xorriso"
+    [mformat]="mtools"
+    [file]="file"
+    [readelf]="binutils"
+)
+
 info "Checking build prerequisites..."
-MISSING=""
-for cmd in make cpio gzip grub-mkrescue xorriso mformat; do
-    command -v "$cmd" >/dev/null 2>&1 || MISSING="$MISSING $cmd"
+MISSING_CMDS=""
+MISSING_PKGS=""
+for cmd in "${!PKG_MAP[@]}"; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        MISSING_CMDS="$MISSING_CMDS $cmd"
+        MISSING_PKGS="$MISSING_PKGS ${PKG_MAP[$cmd]}"
+    fi
 done
-[ -n "$MISSING" ] && die "Missing tools:$MISSING\n  Run: sudo apt install build-essential grub-pc-bin grub-efi-amd64-bin xorriso mtools"
+
+if [ -n "$MISSING_CMDS" ]; then
+    warn "Missing tools:$MISSING_CMDS"
+
+    # In a Docker container or CI environment we are typically root —
+    # try to install missing packages automatically.
+    if command -v apt-get >/dev/null 2>&1; then
+        info "apt-get detected — installing missing packages..."
+        apt-get update -qq
+        # Deduplicate the package list before installing
+        PKGS_TO_INSTALL=$(echo "$MISSING_PKGS" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+        apt-get install -y --no-install-recommends $PKGS_TO_INSTALL ||             die "Auto-install failed. Install manually:\n  apt-get install $PKGS_TO_INSTALL"
+        ok "Packages installed: $PKGS_TO_INSTALL"
+
+        # Re-verify — if still missing after install, die with a clear message
+        STILL_MISSING=""
+        for cmd in "${!PKG_MAP[@]}"; do
+            command -v "$cmd" >/dev/null 2>&1 || STILL_MISSING="$STILL_MISSING $cmd"
+        done
+        [ -n "$STILL_MISSING" ] &&             die "Still missing after install:$STILL_MISSING — check package names for your distro"
+    else
+        die "Cannot auto-install (no apt-get found).\n  Install manually: $MISSING_PKGS"
+    fi
+fi
 
 echo -e "${BOLD}"
 echo "========================================"
@@ -365,7 +404,7 @@ root:x:0:
 user:x:1000:
 EOF
 
-[ -f "$ROOTFS_DIR/etc/hostname" ] || echo "nexos" > "$ROOTFS_DIR/etc/hostname"
+[ -f "$ROOTFS_DIR/etc/hostname" ] || echo "nextos" > "$ROOTFS_DIR/etc/hostname"
 
 [ -f "$ROOTFS_DIR/etc/profile" ] || cat > "$ROOTFS_DIR/etc/profile" <<'EOF'
 export PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
@@ -496,139 +535,4 @@ cd "$PROJECT_DIR"
 
 ok "initramfs packed → $BOOT_DIR/initramfs.img ($(du -sh "$BOOT_DIR/initramfs.img" | cut -f1))"
 
-# =============================================================
-# STEP 6 — Build rootfs image
-# =============================================================
-step 6 "Building rootfs.img (requires sudo)..."
-
-if [ "$SKIP_ROOTFS_IMG" = "1" ]; then
-    warn "Skipping rootfs.img (--skip-rootfs passed)"
-    [ -f "$BOOT_DIR/rootfs.img" ] || \
-        warn "No existing rootfs.img — ISO will not switch_root"
-else
-    if ! sudo -n true 2>/dev/null && ! sudo -v 2>/dev/null; then
-        warn "sudo not available — skipping rootfs.img"
-        warn "Build manually:"
-        warn "  sudo dd if=/dev/zero of=$BOOT_DIR/rootfs.img bs=1M count=256"
-        warn "  sudo mkfs.ext4 -F -L nexos-root $BOOT_DIR/rootfs.img"
-        warn "  sudo mount -o loop $BOOT_DIR/rootfs.img $MNT_DIR"
-        warn "  sudo cp -a $ROOTFS_DIR/. $MNT_DIR/"
-        warn "  sudo umount $MNT_DIR"
-    else
-        ROOTFS_SIZE_MB=256
-        info "Creating ${ROOTFS_SIZE_MB}MB ext4 rootfs image..."
-        sudo dd if=/dev/zero of="$BOOT_DIR/rootfs.img" bs=1M count="$ROOTFS_SIZE_MB" status=progress
-        sudo mkfs.ext4 -F -L "nexos-root" "$BOOT_DIR/rootfs.img"
-
-        info "Populating rootfs image..."
-        sudo mount -o loop "$BOOT_DIR/rootfs.img" "$MNT_DIR"
-        sudo cp -a "$ROOTFS_DIR/." "$MNT_DIR/"
-        sudo umount "$MNT_DIR"
-
-        ok "rootfs.img → $BOOT_DIR/rootfs.img ($(du -sh "$BOOT_DIR/rootfs.img" | cut -f1))"
-    fi
-fi
-
-# =============================================================
-# STEP 7 — Build ISO
-# =============================================================
-step 7 "Building ISO..."
-
-info "Cleaning ISO staging directory..."
-rm -rf "$ISO_DIR"
-mkdir -p "$ISO_DIR/boot/grub/themes/nexos" \
-         "$ISO_DIR/boot/grub/fonts"
-
-cp "$BOOT_DIR/vmlinuz"       "$ISO_DIR/boot/"
-cp "$BOOT_DIR/initramfs.img" "$ISO_DIR/boot/"
-
-if [ -f "$BOOT_DIR/rootfs.img" ]; then
-    cp "$BOOT_DIR/rootfs.img" "$ISO_DIR/boot/"
-    ok "rootfs.img staged"
-else
-    warn "rootfs.img not found — switch_root will not work"
-fi
-
-if [ -f "$GRUB_SRC/grub.cfg" ]; then
-    cp "$GRUB_SRC/grub.cfg" "$ISO_DIR/boot/grub/"
-    ok "grub.cfg staged"
-else
-    warn "grub/ not found — generating minimal fallback grub.cfg"
-    cat > "$ISO_DIR/boot/grub/grub.cfg" <<'GRUBEOF'
-set timeout=10
-set default=0
-insmod all_video
-insmod gfxterm
-insmod png
-set gfxmode=1024x768,auto
-terminal_output gfxterm
-if background_image /boot/grub/nexOS2.png ; then true ; fi
-menuentry "NextOS" {
-    linux  /boot/vmlinuz root=/dev/ram0 rw quiet nexos.rootfs=/boot/rootfs.img
-    initrd /boot/initramfs.img
-}
-menuentry "NextOS (Verbose)" {
-    linux  /boot/vmlinuz root=/dev/ram0 rw nexos.rootfs=/boot/rootfs.img
-    initrd /boot/initramfs.img
-}
-GRUBEOF
-fi
-
-if [ -d "$GRUB_SRC/themes/nexos" ]; then
-    cp -r "$GRUB_SRC/themes/nexos/." "$ISO_DIR/boot/grub/themes/nexos/"
-    ok "GRUB theme staged"
-else
-    warn "GRUB theme not found at $GRUB_SRC/themes/nexos"
-fi
-
-if [ -f "$BANNER_SRC" ]; then
-    cp "$BANNER_SRC" "$ISO_DIR/boot/grub/"
-    [ -d "$ISO_DIR/boot/grub/themes/nexos" ] && \
-        cp "$BANNER_SRC" "$ISO_DIR/boot/grub/themes/nexos/"
-    ok "Banner image staged"
-else
-    warn "Banner not found at $BANNER_SRC"
-fi
-
-UNICODE_FONT=""
-for f in /usr/share/grub/unicode.pf2 \
-         /usr/share/grub2/unicode.pf2 \
-         /boot/grub/fonts/unicode.pf2; do
-    [ -f "$f" ] && UNICODE_FONT="$f" && break
-done
-if [ -n "$UNICODE_FONT" ]; then
-    cp "$UNICODE_FONT" "$ISO_DIR/boot/grub/fonts/"
-    ok "GRUB unicode font staged"
-else
-    warn "unicode.pf2 not found — install grub-common"
-fi
-
-info "Running grub-mkrescue..."
-grub-mkrescue \
-    --output="$ISO_OUT" \
-    "$ISO_DIR" \
-    -- \
-    -volid "NEXTOS"
-
-ok "ISO created → $ISO_OUT ($(du -sh "$ISO_OUT" | cut -f1))"
-
-# =============================================================
-# Summary
-# =============================================================
-echo ""
-echo -e "${BOLD}${GREEN}========================================"
-echo "   NextOS build complete!"
-echo "========================================"
-echo -e "${RESET}"
-echo "  ISO:        $ISO_OUT"
-echo "  Kernel:     $BOOT_DIR/vmlinuz"
-echo "  initramfs:  $BOOT_DIR/initramfs.img"
-[ -f "$BOOT_DIR/rootfs.img" ] && \
-echo "  rootfs:     $BOOT_DIR/rootfs.img"
-echo ""
-echo "  Test with QEMU:"
-echo "    qemu-system-x86_64 -m 512M -cdrom $ISO_OUT -boot d"
-echo ""
-echo "  Test with VirtualBox:"
-echo "    See build/setup_virtualbox.sh"
-echo ""
+echo "Now run build-iso file from your main system to complete he build process"
