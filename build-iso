@@ -23,7 +23,7 @@ BOOT_DIR="$PROJECT_DIR/boot"
 ISO_DIR="$PROJECT_DIR/iso"
 BUILD_DIR="$PROJECT_DIR/build"
 MNT_DIR="$BUILD_DIR/mnt"
-GRUB_SRC="$PROJECT_DIR/iso/boot/grub"
+GRUB_SRC="$PROJECT_DIR/grub"
 BANNER_SRC="$PROJECT_DIR/banner/nextOS2.png"
 ISO_OUT="$PROJECT_DIR/Next-OS.iso"
 
@@ -61,12 +61,18 @@ else
     fi
 fi
 
+# =============================================================
+# STEP 7 — Build ISO
+# =============================================================
 step 7 "Building ISO..."
 
-info "Cleaning ISO staging directory..."
+# FIX #3 — iso/ is a pure build artefact. Deleting it here is safe
+# because grub.cfg and other source files now live in grub/ (outside iso/).
+info "Creating ISO staging directory..."
 rm -rf "$ISO_DIR"
-mkdir -p "$ISO_DIR/boot/grub/themes/nextos" \
-         "$ISO_DIR/boot/grub/fonts"
+mkdir -p \
+    "$ISO_DIR/boot/grub/themes/nextos" \
+    "$ISO_DIR/boot/grub/fonts"
 
 cp "$BOOT_DIR/vmlinuz"       "$ISO_DIR/boot/"
 cp "$BOOT_DIR/initramfs.img" "$ISO_DIR/boot/"
@@ -78,11 +84,14 @@ else
     warn "rootfs.img not found — switch_root will not work"
 fi
 
+# grub.cfg — read from grub/ (NOT from iso/ which was just deleted)
 if [ -f "$GRUB_SRC/grub.cfg" ]; then
     cp "$GRUB_SRC/grub.cfg" "$ISO_DIR/boot/grub/"
-    ok "grub.cfg staged"
+    ok "grub.cfg staged from $GRUB_SRC/grub.cfg"
 else
-    warn "grub/ not found — generating minimal fallback grub.cfg"
+    warn "grub/grub.cfg not found — generating minimal fallback grub.cfg"
+    warn "Create $GRUB_SRC/grub.cfg to use a custom GRUB configuration."
+    mkdir -p "$GRUB_SRC"
     cat > "$ISO_DIR/boot/grub/grub.cfg" <<'GRUBEOF'
 set timeout=10
 set default=0
@@ -101,6 +110,9 @@ menuentry "NextOS (Verbose)" {
     initrd /boot/initramfs.img
 }
 GRUBEOF
+    # Also save a copy to grub/ so it becomes the source going forward
+    cp "$ISO_DIR/boot/grub/grub.cfg" "$GRUB_SRC/grub.cfg"
+    ok "grub.cfg generated and saved to $GRUB_SRC/grub.cfg"
 fi
 
 if [ -d "$GRUB_SRC/themes/nextos" ]; then
@@ -147,8 +159,8 @@ ok "ISO created → $ISO_OUT ($(du -sh "$ISO_OUT" | cut -f1))"
 echo ""
 echo -e "${BOLD}${GREEN}========================================"
 echo "   NextOS build complete!"
-echo "========================================"
-echo -e "${RESET}"
+echo -e "========================================${RESET}"
+echo ""
 echo "  ISO:        $ISO_OUT"
 echo "  Kernel:     $BOOT_DIR/vmlinuz"
 echo "  initramfs:  $BOOT_DIR/initramfs.img"
