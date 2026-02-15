@@ -49,3 +49,5 @@ __pycache__/
 
 # Test artifacts
 /test_initramfs/
+
+rootfs/lib/

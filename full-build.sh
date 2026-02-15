@@ -477,10 +477,10 @@ done
 
 echo ""
 echo -e "${CYAN}  ── initramfs/bin/ ──────────────────────────────────────${RESET}"
-ls "$INITRAMFS_DIR/bin/" | column
+ls "$INITRAMFS_DIR/bin/" | pr -6 -t
 echo ""
 echo -e "${CYAN}  ── initramfs/sbin/ ─────────────────────────────────────${RESET}"
-ls "$INITRAMFS_DIR/sbin/" | column
+ls "$INITRAMFS_DIR/sbin/" | pr -6 -t
 echo ""
 
 # =============================================================
@@ -608,9 +608,7 @@ grub-mkrescue \
     --output="$ISO_OUT" \
     "$ISO_DIR" \
     -- \
-    -volid "NEXTOS" \
-    -joliet \
-    -joliet-long
+    -volid "NEXTOS"
 
 ok "ISO created → $ISO_OUT ($(du -sh "$ISO_OUT" | cut -f1))"
 
