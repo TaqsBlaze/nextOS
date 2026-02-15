@@ -111,8 +111,8 @@ do_clean() {
     echo -e "\n${BOLD}  ISO staging directory:${RESET}"
     if [ -d "$ISO_DIR" ]; then
         SIZE=$(du -sh "$ISO_DIR" 2>/dev/null | cut -f1 || echo "?")
-        rm -rf "$ISO_DIR"
-        clean_item "Removed  iso/  ($SIZE)"
+        # rm -rf "$ISO_DIR"
+        # clean_item "Removed  iso/  ($SIZE)"
     else
         info "  iso/ — not present"
     fi
@@ -253,50 +253,50 @@ fi
 
 # ── Prerequisite check ────────────────────────────────────────
 # Map: command -> apt package(s) that provide it
-declare -A PKG_MAP=(
-    [make]="build-essential"
-    [cpio]="cpio"
-    [gzip]="gzip"
-    [grub-mkrescue]="grub-pc-bin grub-efi-amd64-bin grub-common"
-    [xorriso]="xorriso"
-    [mformat]="mtools"
-    [file]="file"
-    [readelf]="binutils"
-)
+# declare -A PKG_MAP=(
+#     [make]="build-essential"
+#     [cpio]="cpio"
+#     [gzip]="gzip"
+#     [grub-mkrescue]="grub-pc-bin grub-efi-amd64-bin grub-common"
+#     [xorriso]="xorriso"
+#     [mformat]="mtools"
+#     [file]="file"
+#     [readelf]="binutils"
+# )
 
-info "Checking build prerequisites..."
-MISSING_CMDS=""
-MISSING_PKGS=""
-for cmd in "${!PKG_MAP[@]}"; do
-    if ! command -v "$cmd" >/dev/null 2>&1; then
-        MISSING_CMDS="$MISSING_CMDS $cmd"
-        MISSING_PKGS="$MISSING_PKGS ${PKG_MAP[$cmd]}"
-    fi
-done
+# info "Checking build prerequisites..."
+# MISSING_CMDS=""
+# MISSING_PKGS=""
+# for cmd in "${!PKG_MAP[@]}"; do
+#     if ! command -v "$cmd" >/dev/null 2>&1; then
+#         MISSING_CMDS="$MISSING_CMDS $cmd"
+#         MISSING_PKGS="$MISSING_PKGS ${PKG_MAP[$cmd]}"
+#     fi
+# done
 
-if [ -n "$MISSING_CMDS" ]; then
-    warn "Missing tools:$MISSING_CMDS"
+# if [ -n "$MISSING_CMDS" ]; then
+#     warn "Missing tools:$MISSING_CMDS"
 
-    # In a Docker container or CI environment we are typically root —
-    # try to install missing packages automatically.
-    if command -v apt-get >/dev/null 2>&1; then
-        info "apt-get detected — installing missing packages..."
-        apt-get update -qq
-        # Deduplicate the package list before installing
-        PKGS_TO_INSTALL=$(echo "$MISSING_PKGS" | tr ' ' '\n' | sort -u | tr '\n' ' ')
-        apt-get install -y --no-install-recommends $PKGS_TO_INSTALL ||             die "Auto-install failed. Install manually:\n  apt-get install $PKGS_TO_INSTALL"
-        ok "Packages installed: $PKGS_TO_INSTALL"
+#     # In a Docker container or CI environment we are typically root —
+#     # try to install missing packages automatically.
+#     if command -v apt-get >/dev/null 2>&1; then
+#         info "apt-get detected — installing missing packages..."
+#         apt-get update -qq
+#         # Deduplicate the package list before installing
+#         PKGS_TO_INSTALL=$(echo "$MISSING_PKGS" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+#         apt-get install -y --no-install-recommends $PKGS_TO_INSTALL ||             die "Auto-install failed. Install manually:\n  apt-get install $PKGS_TO_INSTALL"
+#         ok "Packages installed: $PKGS_TO_INSTALL"
 
-        # Re-verify — if still missing after install, die with a clear message
-        STILL_MISSING=""
-        for cmd in "${!PKG_MAP[@]}"; do
-            command -v "$cmd" >/dev/null 2>&1 || STILL_MISSING="$STILL_MISSING $cmd"
-        done
-        [ -n "$STILL_MISSING" ] &&             die "Still missing after install:$STILL_MISSING — check package names for your distro"
-    else
-        die "Cannot auto-install (no apt-get found).\n  Install manually: $MISSING_PKGS"
-    fi
-fi
+#         # Re-verify — if still missing after install, die with a clear message
+#         STILL_MISSING=""
+#         for cmd in "${!PKG_MAP[@]}"; do
+#             command -v "$cmd" >/dev/null 2>&1 || STILL_MISSING="$STILL_MISSING $cmd"
+#         done
+#         [ -n "$STILL_MISSING" ] &&             die "Still missing after install:$STILL_MISSING — check package names for your distro"
+#     else
+#         die "Cannot auto-install (no apt-get found).\n  Install manually: $MISSING_PKGS"
+#     fi
+# fi
 
 echo -e "${BOLD}"
 echo "========================================"
@@ -536,3 +536,4 @@ cd "$PROJECT_DIR"
 ok "initramfs packed → $BOOT_DIR/initramfs.img ($(du -sh "$BOOT_DIR/initramfs.img" | cut -f1))"
 
 echo "Now run build-iso file from your main system to complete he build process"
+

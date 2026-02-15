@@ -1,6 +1,6 @@
 #!/bin/sh
 # =============================================================
-#  NextOS initramfs /init
+#  nextos initramfs /init
 #  Purpose: Early userspace boot - mount rootfs, switch_root
 #  Runs as PID 1 directly after kernel decompresses initramfs
 # =============================================================
@@ -12,7 +12,7 @@ echo " | \| |_____ __ | |_ / _ \/ __|"
 echo " | .\` / -_) \ / |  _| (_) \__ \\"
 echo " |_|\_\___/_\_\  \__|\___/|___/"
 echo ""
-echo "  NextOS initramfs v1.0 — booting..."
+echo "  nextos initramfs v1.0 — booting..."
 echo ""
 
 # ── 2. Mount essential virtual filesystems ────────────────────
@@ -51,11 +51,11 @@ done
 sleep 1
 
 # ── 6. Parse kernel command line ─────────────────────────────
-# Supports: nextOS.rootfs=<path>  (default: /boot/rootfs.img)
+# Supports: nextos.rootfs=<path>  (default: /boot/rootfs.img)
 ROOTFS_PATH="/boot/rootfs.img"
 for arg in $(cat /proc/cmdline); do
     case "$arg" in
-        nextOS.rootfs=*) ROOTFS_PATH="${arg#nextOS.rootfs=}" ;;
+        nextos.rootfs=*) ROOTFS_PATH="${arg#nextos.rootfs=}" ;;
         ro|rw)          ROOT_MOUNT_OPT="$arg" ;;
     esac
 done
@@ -154,7 +154,7 @@ fi
 # Reached only on failure. Gives the user a shell to debug.
 echo ""
 echo "================================================"
-echo "  NextOS — EMERGENCY SHELL"
+echo "  nextos — EMERGENCY SHELL"
 echo ""
 echo "  Root filesystem could NOT be mounted."
 echo "  Useful commands to diagnose:"

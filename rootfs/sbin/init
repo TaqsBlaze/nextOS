@@ -51,11 +51,11 @@ done
 sleep 1
 
 # ── 6. Parse kernel command line ─────────────────────────────
-# Supports: nextOS.rootfs=<path>  (default: /boot/rootfs.img)
+# Supports: nextos.rootfs=<path>  (default: /boot/rootfs.img)
 ROOTFS_PATH="/boot/rootfs.img"
 for arg in $(cat /proc/cmdline); do
     case "$arg" in
-        nextOS.rootfs=*) ROOTFS_PATH="${arg#nextOS.rootfs=}" ;;
+        nextos.rootfs=*) ROOTFS_PATH="${arg#nextos.rootfs=}" ;;
         ro|rw)          ROOT_MOUNT_OPT="$arg" ;;
     esac
 done
