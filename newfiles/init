@@ -1,0 +1,167 @@
+#!/bin/sh
+# =============================================================
+#  NextOS initramfs /init
+#  Purpose: Early userspace boot - mount rootfs, switch_root
+#  Runs as PID 1 directly after kernel decompresses initramfs
+# =============================================================
+
+# ── 1. Banner ─────────────────────────────────────────────────
+echo ""
+echo "  _  _           _    ___  ___"
+echo " | \| |_____ __ | |_ / _ \/ __|"
+echo " | .\` / -_) \ / |  _| (_) \__ \\"
+echo " |_|\_\___/_\_\  \__|\___/|___/"
+echo ""
+echo "  NextOS initramfs v1.0 — booting..."
+echo ""
+
+# ── 2. Mount essential virtual filesystems ────────────────────
+# These must come first — nothing works without them
+mount -t proc     proc     /proc
+mount -t sysfs    sysfs    /sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || \
+    mount -t tmpfs tmpfs   /dev
+
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts 2>/dev/null
+
+# ── 3. Ensure critical device nodes exist ────────────────────
+# (devtmpfs should create these, but be defensive)
+[ -e /dev/console ] || mknod /dev/console c 5  1
+[ -e /dev/null    ] || mknod /dev/null    c 1  3
+[ -e /dev/zero    ] || mknod /dev/zero    c 1  5
+[ -e /dev/tty     ] || mknod /dev/tty     c 5  0
+[ -e /dev/tty1    ] || mknod /dev/tty1    c 4  1
+[ -e /dev/random  ] || mknod /dev/random  c 1  8
+[ -e /dev/urandom ] || mknod /dev/urandom c 1  9
+# Loop devices (needed to mount rootfs.img from ISO)
+for i in 0 1 2 3 4 5 6 7; do
+    [ -e "/dev/loop$i" ] || mknod "/dev/loop$i" b 7 $i
+done
+
+# ── 4. Kernel module loading ──────────────────────────────────
+# If built as modules (not compiled-in), load them now.
+# If CONFIG_*=y these are silently ignored (modprobe returns 0).
+# Required for: ISO mount, loop device, root filesystem.
+for mod in iso9660 loop ext4 ext3 squashfs cdrom; do
+    modprobe $mod 2>/dev/null
+done
+
+# ── 5. Give uevents time to settle ───────────────────────────
+sleep 1
+
+# ── 6. Parse kernel command line ─────────────────────────────
+# Supports: nexos.rootfs=<path>  (default: /boot/rootfs.img)
+ROOTFS_PATH="/boot/rootfs.img"
+for arg in $(cat /proc/cmdline); do
+    case "$arg" in
+        nexos.rootfs=*) ROOTFS_PATH="${arg#nexos.rootfs=}" ;;
+        ro|rw)          ROOT_MOUNT_OPT="$arg" ;;
+    esac
+done
+ROOT_MOUNT_OPT="${ROOT_MOUNT_OPT:-ro}"
+
+echo "[init] Kernel cmdline: $(cat /proc/cmdline)"
+echo "[init] Expecting rootfs at: $ROOTFS_PATH"
+
+# ── 7. Probe all optical + block devices for the boot ISO ─────
+ROOT_MOUNTED=0
+
+# Build a candidate list: optical drives first, then storage
+CANDIDATES=""
+for dev in sr0 sr1 sr2 sda sda1 sdb sdb1 hda hdc vda vda1; do
+    [ -b "/dev/$dev" ] && CANDIDATES="$CANDIDATES /dev/$dev"
+done
+
+for ISO_DEV in $CANDIDATES; do
+    echo "[init] Trying ISO device: $ISO_DEV"
+
+    # Attempt ISO9660 mount (read-only; it's a CD/ISO)
+    if mount -t iso9660 -o ro "$ISO_DEV" /mnt/iso 2>/dev/null; then
+        echo "[init] Mounted ISO from $ISO_DEV"
+
+        # Check that rootfs.img is present on the ISO
+        if [ -f "/mnt/iso${ROOTFS_PATH}" ]; then
+            echo "[init] Found rootfs image at /mnt/iso${ROOTFS_PATH}"
+
+            # Attach rootfs.img to first free loop device
+            LOOP_DEV=""
+            for i in 0 1 2 3 4 5; do
+                DEV="/dev/loop$i"
+                losetup "$DEV" "/mnt/iso${ROOTFS_PATH}" 2>/dev/null && \
+                    LOOP_DEV="$DEV" && break
+            done
+
+            if [ -n "$LOOP_DEV" ]; then
+                echo "[init] Attached rootfs.img to $LOOP_DEV"
+
+                # Mount the ext4 rootfs (rw so /tmp, /run, etc. work)
+                if mount -t ext4 -o rw "$LOOP_DEV" /mnt/root 2>/dev/null; then
+                    echo "[init] Root filesystem mounted successfully."
+                    ROOT_MOUNTED=1
+                    break
+                else
+                    echo "[init] WARNING: ext4 mount failed on $LOOP_DEV, detaching."
+                    losetup -d "$LOOP_DEV"
+                fi
+            else
+                echo "[init] ERROR: No free loop device available."
+            fi
+        else
+            echo "[init] rootfs.img not found on $ISO_DEV, skipping."
+        fi
+
+        umount /mnt/iso 2>/dev/null
+    fi
+done
+
+# ── 8. Switch root ─────────────────────────────────────────────
+if [ "$ROOT_MOUNTED" = "1" ]; then
+    echo ""
+    echo "[init] Switching to root filesystem..."
+
+    # Confirm the target has an init binary
+    TARGET_INIT=""
+    for candidate in /sbin/init /bin/init /init /bin/sh; do
+        [ -x "/mnt/root$candidate" ] && TARGET_INIT="$candidate" && break
+    done
+
+    if [ -z "$TARGET_INIT" ]; then
+        echo "[init] ERROR: No executable init found in new root!"
+        echo "[init] Contents of /mnt/root/sbin:"
+        ls /mnt/root/sbin 2>/dev/null || echo "  (empty or missing)"
+        echo "[init] Dropping to emergency shell."
+    else
+        echo "[init] Using init: $TARGET_INIT"
+
+        # Move virtual filesystems into the new root so they survive switch
+        mount --move /proc /mnt/root/proc 2>/dev/null || \
+            mount -t proc proc /mnt/root/proc
+        mount --move /sys  /mnt/root/sys  2>/dev/null || \
+            mount -t sysfs sysfs /mnt/root/sys
+        mount --move /dev  /mnt/root/dev  2>/dev/null || \
+            mount -t devtmpfs devtmpfs /mnt/root/dev
+
+        # Hand off to real root — this replaces PID 1 entirely
+        exec switch_root /mnt/root "$TARGET_INIT"
+
+        # If we get here, switch_root itself failed
+        echo "[init] FATAL: switch_root failed!"
+    fi
+fi
+
+# ── 9. Emergency shell ─────────────────────────────────────────
+# Reached only on failure. Gives the user a shell to debug.
+echo ""
+echo "================================================"
+echo "  NextOS — EMERGENCY SHELL"
+echo ""
+echo "  Root filesystem could NOT be mounted."
+echo "  Useful commands to diagnose:"
+echo "    ls /dev          — list detected devices"
+echo "    dmesg | tail     — kernel messages"
+echo "    mount            — current mounts"
+echo "    ls /mnt/iso      — ISO contents (if mounted)"
+echo "================================================"
+echo ""
+exec /bin/sh
