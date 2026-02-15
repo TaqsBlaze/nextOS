@@ -1,7 +1,17 @@
 #!/bin/bash
 # =============================================================
 #  NextOS — Master Build Script
-#  Usage: ./full-build.sh [--skip-kernel] [--skip-rootfs]
+#
+#  Usage: ./full-build.sh [OPTIONS]
+#
+#  Options:
+#    --clean           Wipe all build artifacts, then build fresh
+#    --clean-only      Wipe all build artifacts and exit (no build)
+#    --clean-kernel    Include kernel object files in the clean
+#                      (implies --clean; runs 'make mrproper')
+#    --skip-kernel     Re-use existing vmlinuz  (saves ~10 min)
+#    --skip-rootfs     Skip rootfs.img creation (needs sudo)
+#    --help | -h       Show this message
 # =============================================================
 set -euo pipefail
 
@@ -12,19 +22,47 @@ info()    { echo -e "${CYAN}[INFO]${RESET}  $*"; }
 ok()      { echo -e "${GREEN}[OK]${RESET}    $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
 die()     { echo -e "${RED}[FATAL]${RESET} $*" >&2; exit 1; }
-step()    { echo -e "\n${BOLD}${GREEN}[$1/6] $2${RESET}"; }
+step()    { echo -e "\n${BOLD}${GREEN}[$1/7] $2${RESET}"; }
+clean_item() {
+    # Prints a consistent line for each thing removed during clean
+    echo -e "  ${RED}[-]${RESET}  $*"
+}
 
-# ── Argument parsing ─────────────────────────────────────────
+# ── Argument parsing ──────────────────────────────────────────
+DO_CLEAN=0
+CLEAN_ONLY=0
+CLEAN_KERNEL=0
 SKIP_KERNEL=0
 SKIP_ROOTFS_IMG=0
+
 for arg in "$@"; do
     case "$arg" in
-        --skip-kernel)       SKIP_KERNEL=1 ;;
-        --skip-rootfs)       SKIP_ROOTFS_IMG=1 ;;
+        --clean)          DO_CLEAN=1 ;;
+        --clean-only)     DO_CLEAN=1; CLEAN_ONLY=1 ;;
+        --clean-kernel)   DO_CLEAN=1; CLEAN_KERNEL=1 ;;
+        --skip-kernel)    SKIP_KERNEL=1 ;;
+        --skip-rootfs)    SKIP_ROOTFS_IMG=1 ;;
         --help|-h)
-            echo "Usage: $0 [--skip-kernel] [--skip-rootfs]"
-            echo "  --skip-kernel   Re-use existing vmlinuz (saves ~10 min)"
-            echo "  --skip-rootfs   Skip rootfs.img creation (needs sudo)"
+            echo ""
+            echo "  Usage: $0 [OPTIONS]"
+            echo ""
+            echo "  Build options:"
+            echo "    --skip-kernel     Re-use existing vmlinuz (saves ~10 min)"
+            echo "    --skip-rootfs     Skip rootfs.img creation (needs sudo)"
+            echo ""
+            echo "  Clean options:"
+            echo "    --clean           Wipe all build artifacts, then do a full build"
+            echo "    --clean-only      Wipe all build artifacts and exit (no build)"
+            echo "    --clean-kernel    Also wipe kernel objects (runs make mrproper)"
+            echo "                      Combine with --clean or --clean-only"
+            echo ""
+            echo "  Examples:"
+            echo "    $0                          Normal incremental build"
+            echo "    $0 --clean                  Clean everything, then full build"
+            echo "    $0 --clean --skip-kernel    Clean, then build (re-use kernel)"
+            echo "    $0 --clean-only             Just clean, don't build"
+            echo "    $0 --clean-only --clean-kernel   Deep clean including kernel objs"
+            echo ""
             exit 0
             ;;
     esac
@@ -44,6 +82,175 @@ GRUB_SRC="$PROJECT_DIR/grub"
 BANNER_SRC="$PROJECT_DIR/banner/nexOS2.png"
 ISO_OUT="$PROJECT_DIR/Next-OS.iso"
 
+# =============================================================
+#  CLEAN FUNCTION
+#  Removes only what the build script generates — never touches
+#  source files (grub/, initramfs/init, rootfs/sbin/init, etc.)
+# =============================================================
+do_clean() {
+    echo -e "\n${BOLD}${RED}========================================"
+    echo "   NextOS Clean"
+    if [ "$CLEAN_KERNEL" = "1" ]; then
+        echo "   Mode: full (including kernel objects)"
+    else
+        echo "   Mode: standard (kernel objects preserved)"
+    fi
+    echo -e "========================================${RESET}\n"
+
+    # ── 1. ISO output file ────────────────────────────────────
+    echo -e "${BOLD}  ISO output:${RESET}"
+    if [ -f "$ISO_OUT" ]; then
+        SIZE=$(du -sh "$ISO_OUT" | cut -f1)
+        rm -f "$ISO_OUT"
+        clean_item "Removed  Next-OS.iso  ($SIZE)"
+    else
+        info "  Next-OS.iso — not present"
+    fi
+
+    # ── 2. ISO staging directory ─────────────────────────────
+    echo -e "\n${BOLD}  ISO staging directory:${RESET}"
+    if [ -d "$ISO_DIR" ]; then
+        SIZE=$(du -sh "$ISO_DIR" 2>/dev/null | cut -f1 || echo "?")
+        rm -rf "$ISO_DIR"
+        clean_item "Removed  iso/  ($SIZE)"
+    else
+        info "  iso/ — not present"
+    fi
+
+    # ── 3. Boot artifacts ─────────────────────────────────────
+    echo -e "\n${BOLD}  Boot artifacts (boot/):${RESET}"
+    BOOT_ARTIFACTS="vmlinuz initramfs.img rootfs.img"
+    FOUND_ANY=0
+    for artifact in $BOOT_ARTIFACTS; do
+        TARGET="$BOOT_DIR/$artifact"
+        if [ -f "$TARGET" ]; then
+            SIZE=$(du -sh "$TARGET" | cut -f1)
+            rm -f "$TARGET"
+            clean_item "Removed  boot/$artifact  ($SIZE)"
+            FOUND_ANY=1
+        fi
+    done
+    [ "$FOUND_ANY" = "0" ] && info "  boot/ — no artifacts present"
+
+    # ── 4. Busybox symlinks in initramfs ─────────────────────
+    # Remove ONLY symlinks — never touch real binaries or scripts
+    echo -e "\n${BOLD}  Busybox symlinks (initramfs/bin/ and initramfs/sbin/):${RESET}"
+    LINK_COUNT=0
+    for dir in bin sbin usr/bin usr/sbin; do
+        TARGET_DIR="$INITRAMFS_DIR/$dir"
+        [ -d "$TARGET_DIR" ] || continue
+        while IFS= read -r -d '' link; do
+            # Only remove symlinks that point at busybox (leave unrelated symlinks)
+            DEST=$(readlink "$link" 2>/dev/null || true)
+            case "$DEST" in
+                busybox|*/busybox|../bin/busybox)
+                    rm -f "$link"
+                    LINK_COUNT=$((LINK_COUNT + 1))
+                    ;;
+            esac
+        done < <(find "$TARGET_DIR" -maxdepth 1 -type l -print0 2>/dev/null)
+    done
+    if [ "$LINK_COUNT" -gt 0 ]; then
+        clean_item "Removed  $LINK_COUNT busybox symlinks from initramfs/bin/ and initramfs/sbin/"
+    else
+        info "  No busybox symlinks found"
+    fi
+
+    # ── 5. Rootfs — build-generated files only ───────────────
+    # The rootfs/ directory is a SOURCE tree. We only remove files
+    # that were placed there by the build steps, not hand-authored files.
+    #
+    # Build-placed files:
+    #   rootfs/bin/bash               — copied from host /bin/bash
+    #   rootfs/lib/x86_64-linux-gnu/  — bash shared libraries
+    #   rootfs/lib64/                 — ELF dynamic linker
+    #   rootfs/lib/modules/           — kernel modules (make modules_install)
+    #
+    # Source files that are NEVER touched:
+    #   rootfs/sbin/init              — hand-authored PID 1 script
+    #   rootfs/etc/                   — config files
+    #   rootfs/system/                — NextOS init system
+    #   rootfs/home/, rootfs/root/    — user directories
+    echo -e "\n${BOLD}  Rootfs build-generated files (rootfs/):${RESET}"
+
+    # bash binary
+    if [ -f "$ROOTFS_DIR/bin/bash" ]; then
+        rm -f "$ROOTFS_DIR/bin/bash"
+        clean_item "Removed  rootfs/bin/bash"
+    fi
+
+    # bash shared libraries (only the arch-specific lib dir)
+    for libdir in \
+        "$ROOTFS_DIR/lib/x86_64-linux-gnu" \
+        "$ROOTFS_DIR/lib/i386-linux-gnu" \
+        "$ROOTFS_DIR/lib/aarch64-linux-gnu"; do
+        if [ -d "$libdir" ]; then
+            SIZE=$(du -sh "$libdir" | cut -f1)
+            rm -rf "$libdir"
+            clean_item "Removed  ${libdir#$PROJECT_DIR/}  ($SIZE)"
+        fi
+    done
+
+    # ELF dynamic linker directory
+    if [ -d "$ROOTFS_DIR/lib64" ] && [ -n "$(ls -A "$ROOTFS_DIR/lib64" 2>/dev/null)" ]; then
+        SIZE=$(du -sh "$ROOTFS_DIR/lib64" | cut -f1)
+        rm -rf "$ROOTFS_DIR/lib64"
+        mkdir -p "$ROOTFS_DIR/lib64"   # re-create empty placeholder
+        clean_item "Removed  rootfs/lib64/ contents  ($SIZE)"
+    fi
+
+    # Kernel modules (installed by make modules_install)
+    if [ -d "$ROOTFS_DIR/lib/modules" ]; then
+        SIZE=$(du -sh "$ROOTFS_DIR/lib/modules" | cut -f1)
+        rm -rf "$ROOTFS_DIR/lib/modules"
+        clean_item "Removed  rootfs/lib/modules/  ($SIZE)"
+    fi
+
+    # ── 6. Kernel build objects ───────────────────────────────
+    echo -e "\n${BOLD}  Kernel build objects:${RESET}"
+    if [ "$CLEAN_KERNEL" = "1" ]; then
+        if [ -d "$KERNEL_DIR" ]; then
+            info "  Running make mrproper in $KERNEL_DIR ..."
+            info "  (This removes all objects AND .config — keep a backup if needed)"
+            cd "$KERNEL_DIR"
+            make mrproper 2>&1 | tail -3
+            cd "$PROJECT_DIR"
+            clean_item "Kernel objects wiped via make mrproper"
+        else
+            info "  Kernel source not present — nothing to clean"
+        fi
+    else
+        if [ -d "$KERNEL_DIR" ] && [ -f "$KERNEL_DIR/vmlinux" ]; then
+            info "  Running make clean in $KERNEL_DIR ..."
+            info "  (.config preserved — use --clean-kernel to also wipe it)"
+            cd "$KERNEL_DIR"
+            make clean 2>&1 | tail -3
+            cd "$PROJECT_DIR"
+            clean_item "Kernel objects cleaned via make clean (.config kept)"
+        else
+            info "  No kernel build objects found"
+        fi
+    fi
+
+    # ── Summary ───────────────────────────────────────────────
+    echo ""
+    echo -e "${BOLD}${GREEN}  Clean complete.${RESET}"
+    echo ""
+}
+
+# =============================================================
+#  Run clean if requested
+# =============================================================
+if [ "$DO_CLEAN" = "1" ]; then
+    do_clean
+    if [ "$CLEAN_ONLY" = "1" ]; then
+        echo "  --clean-only passed. Exiting without building."
+        echo ""
+        exit 0
+    fi
+    echo -e "  Proceeding to full build...\n"
+fi
+
 # ── Prerequisite check ────────────────────────────────────────
 info "Checking build prerequisites..."
 MISSING=""
@@ -60,7 +267,6 @@ echo "   Kernel:  $KERNEL_VERSION"
 echo "========================================"
 echo -e "${RESET}"
 
-# ── Create required directories ───────────────────────────────
 mkdir -p "$BOOT_DIR" "$MNT_DIR"
 
 # =============================================================
@@ -70,24 +276,15 @@ step 1 "Building kernel ${KERNEL_VERSION}..."
 
 if [ "$SKIP_KERNEL" = "1" ]; then
     warn "Skipping kernel build (--skip-kernel passed)"
-    [ -f "$BOOT_DIR/vmlinuz" ] || die "No existing vmlinuz found at $BOOT_DIR/vmlinuz"
+    [ -f "$BOOT_DIR/vmlinuz" ] || die "No existing vmlinuz at $BOOT_DIR/vmlinuz"
 else
     [ -d "$KERNEL_DIR" ] || die "Kernel source not found at $KERNEL_DIR\n  Run: build/download_kernel.sh"
-
     cd "$KERNEL_DIR"
 
-    # Use olddefconfig to preserve existing config, then ensure
-    # the following options are enabled for ISO boot + switch_root:
-    #   CONFIG_ISO9660_FS=y   — read the boot ISO
-    #   CONFIG_BLK_DEV_LOOP=y — loop-mount rootfs.img
-    #   CONFIG_EXT4_FS=y      — rootfs filesystem
-    #   CONFIG_DEVTMPFS=y     — automatic /dev population
-    #   CONFIG_DEVTMPFS_MOUNT=y
-    #   CONFIG_FB_VESA=y      — GRUB framebuffer handoff
     info "Applying kernel config..."
     make olddefconfig
 
-    # Patch critical options in (non-destructive)
+    # Force-enable options required for ISO boot + switch_root + GRUB graphics
     scripts/config \
         --enable  CONFIG_ISO9660_FS \
         --enable  CONFIG_BLK_DEV_LOOP \
@@ -99,12 +296,10 @@ else
         --disable CONFIG_ISO9660_FS_MODULE \
         --disable CONFIG_BLK_DEV_LOOP_MODULE
 
-    info "Building kernel (using $(nproc) threads)..."
+    info "Building kernel ($(nproc) threads)..."
     make -j"$(nproc)"
-
     cp arch/x86/boot/bzImage "$BOOT_DIR/vmlinuz"
     ok "Kernel built → $BOOT_DIR/vmlinuz"
-
     cd "$PROJECT_DIR"
 fi
 
@@ -116,141 +311,204 @@ step 2 "Installing kernel modules into rootfs..."
 if [ "$SKIP_KERNEL" = "0" ]; then
     cd "$KERNEL_DIR"
     make modules_install INSTALL_MOD_PATH="$ROOTFS_DIR"
-    # Remove build/source symlinks (they point to build host paths)
     find "$ROOTFS_DIR/lib/modules" -maxdepth 2 \
         \( -name build -o -name source \) -type l -delete 2>/dev/null || true
-    ok "Modules installed into $ROOTFS_DIR/lib/modules/"
+    ok "Modules installed → $ROOTFS_DIR/lib/modules/"
     cd "$PROJECT_DIR"
 else
-    warn "Skipping module install (kernel build was skipped)"
+    warn "Skipping module install (kernel build skipped)"
 fi
 
 # =============================================================
 # STEP 3 — Populate rootfs
 # =============================================================
-step 3 "Populating rootfs with bash and libraries..."
+step 3 "Populating rootfs..."
 
-mkdir -p "$ROOTFS_DIR"/{bin,sbin,lib,lib64,dev,proc,sys,etc,tmp,run}
+mkdir -p "$ROOTFS_DIR"/{bin,sbin,lib,lib64,dev,proc,sys,etc,tmp,run,var/log,home/user,root}
 
-# ── Bash ──────────────────────────────────────────────────────
+# ── Bash + shared libraries ───────────────────────────────────
 cp /bin/bash "$ROOTFS_DIR/bin/bash"
 
-# Copy all shared library dependencies for bash
 copy_libs() {
-    local binary="$1"
-    local dest_root="$2"
-    # Extract all .so paths from ldd output (handles symlinks and direct paths)
+    local binary="$1" dest_root="$2"
     ldd "$binary" 2>/dev/null | grep -oP '(/[a-zA-Z0-9_./-]+\.so[.0-9]*)' | sort -u | \
     while read -r lib; do
         [ -f "$lib" ] || continue
         local dest_dir="$dest_root$(dirname "$lib")"
         mkdir -p "$dest_dir"
-        # -L: follow symlinks so we get the real .so file
         cp -L "$lib" "$dest_dir/" 2>/dev/null || true
-        # Also copy the canonical symlink name if it differs
-        local linkname
-        linkname=$(basename "$lib")
-        [ -f "$dest_dir/$linkname" ] || cp "$lib" "$dest_dir/$linkname" 2>/dev/null || true
     done
-
-    # Copy the ELF dynamic linker (ld-linux) explicitly
     local interp
-    interp=$(patchelf --print-interpreter "$binary" 2>/dev/null || \
-             readelf -l "$binary" 2>/dev/null | grep -oP '\[.+ld[^]]+\]' | tr -d '[]')
+    interp=$(readelf -l "$binary" 2>/dev/null \
+             | grep -oP '\[.+ld[^]]+\]' | tr -d '[]' || true)
     if [ -n "$interp" ] && [ -f "$interp" ]; then
-        local dest_dir="$dest_root$(dirname "$interp")"
-        mkdir -p "$dest_dir"
-        cp -L "$interp" "$dest_dir/"
+        mkdir -p "$dest_root$(dirname "$interp")"
+        cp -L "$interp" "$dest_root$(dirname "$interp")/"
     fi
 }
 copy_libs /bin/bash "$ROOTFS_DIR"
 
-# ── /sbin/init (our PID 1 script) ────────────────────────────
-# This file must exist in rootfs — switch_root calls it
-if [ -f "$PROJECT_DIR/rootfs/sbin/init" ]; then
-    chmod +x "$ROOTFS_DIR/sbin/init"
-    ok "/sbin/init present in rootfs"
-else
-    die "MISSING: rootfs/sbin/init — create it before building.\n  See: docs/BUILD_SYSTEM.md"
-fi
+# ── /sbin/init ────────────────────────────────────────────────
+[ -f "$ROOTFS_DIR/sbin/init" ] || \
+    die "MISSING: rootfs/sbin/init — see docs/BUILD_SYSTEM.md"
+chmod +x "$ROOTFS_DIR/sbin/init"
+ok "/sbin/init present and executable"
 
-# ── Minimal /etc ─────────────────────────────────────────────
-if [ ! -f "$ROOTFS_DIR/etc/passwd" ]; then
-    {
-        echo "root:x:0:0:root:/root:/bin/bash"
-        echo "user:x:1000:1000:NextOS User:/home/user:/bin/bash"
-    } > "$ROOTFS_DIR/etc/passwd"
-fi
+# ── Minimal /etc ──────────────────────────────────────────────
+[ -f "$ROOTFS_DIR/etc/passwd" ] || cat > "$ROOTFS_DIR/etc/passwd" <<'EOF'
+root:x:0:0:root:/root:/bin/bash
+user:x:1000:1000:NextOS User:/home/user:/bin/bash
+EOF
 
-if [ ! -f "$ROOTFS_DIR/etc/group" ]; then
-    {
-        echo "root:x:0:"
-        echo "user:x:1000:"
-    } > "$ROOTFS_DIR/etc/group"
-fi
+[ -f "$ROOTFS_DIR/etc/group" ] || cat > "$ROOTFS_DIR/etc/group" <<'EOF'
+root:x:0:
+user:x:1000:
+EOF
 
-if [ ! -f "$ROOTFS_DIR/etc/hostname" ]; then
-    echo "nexos" > "$ROOTFS_DIR/etc/hostname"
-fi
+[ -f "$ROOTFS_DIR/etc/hostname" ] || echo "nexos" > "$ROOTFS_DIR/etc/hostname"
 
-if [ ! -f "$ROOTFS_DIR/etc/profile" ]; then
-    cat > "$ROOTFS_DIR/etc/profile" <<'PROFILE'
+[ -f "$ROOTFS_DIR/etc/profile" ] || cat > "$ROOTFS_DIR/etc/profile" <<'EOF'
 export PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 export PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
 export HOME=/root
-PROFILE
-fi
+export TERM=linux
+EOF
 
 ok "rootfs populated"
 
 # =============================================================
-# STEP 4 — Build initramfs
+# STEP 4 — Busybox symlinks (initramfs)
 # =============================================================
-step 4 "Building initramfs..."
+step 4 "Creating busybox symlinks in initramfs..."
 
-# Ensure the init script is executable
+BUSYBOX_BIN="$INITRAMFS_DIR/bin/busybox"
+[ -f "$BUSYBOX_BIN" ] || die "busybox not found at $BUSYBOX_BIN"
+[ -x "$BUSYBOX_BIN" ] || chmod +x "$BUSYBOX_BIN"
+
+if file "$BUSYBOX_BIN" | grep -q "dynamically"; then
+    warn "busybox is dynamically linked!"
+    warn "initramfs REQUIRES a static busybox build."
+    warn "Download: https://busybox.net/downloads/binaries/"
+fi
+
+# Applets that belong in sbin/
+SBIN_APPLETS="
+    acpid       adjtimex    arp         blkid       blockdev
+    brctl       chroot      depmod      devmem      dhcprelay
+    dnsmasq     e2fsck      eject       fdisk       findfs
+    freeramdisk fsck        fsck.ext2   fsck.ext3   fsck.ext4
+    getty       halt        hdparm      hwclock
+    ifconfig    ifdown      ifenslave   ifup
+    init        insmod      ip          ipcalc
+    klogd       ldconfig    loadkmap    losetup
+    mdev        mkdosfs     mke2fs      mkfs.ext2   mkfs.ext3
+    mkfs.ext4   mkfs.vfat   mknod       mkswap
+    modinfo     modprobe    nameif
+    pivot_root  poweroff
+    raidautorun reboot      rmmod       route       runlevel
+    setconsole  start-stop-daemon       sulogin
+    swapoff     swapon      switch_root
+    sysctl      syslogd
+    udhcpc      udhcpd      umount      zcip
+"
+
+CRITICAL_APPLETS="sh mount umount switch_root losetup modprobe mknod sleep"
+
+mkdir -p \
+    "$INITRAMFS_DIR/bin" \
+    "$INITRAMFS_DIR/sbin" \
+    "$INITRAMFS_DIR/usr/bin" \
+    "$INITRAMFS_DIR/usr/sbin" \
+    "$INITRAMFS_DIR/dev" \
+    "$INITRAMFS_DIR/proc" \
+    "$INITRAMFS_DIR/sys" \
+    "$INITRAMFS_DIR/mnt/iso" \
+    "$INITRAMFS_DIR/mnt/root"
+
+is_sbin() { echo "$SBIN_APPLETS" | grep -qw "$1"; }
+
+info "Querying busybox --list..."
+APPLET_LIST=$("$BUSYBOX_BIN" --list 2>/dev/null) || \
+    die "busybox --list failed — binary may be corrupt or wrong architecture"
+
+TOTAL=0; BIN_COUNT=0; SBIN_COUNT=0; SKIPPED=0
+
+while IFS= read -r applet; do
+    [ -z "$applet" ] && continue
+    if is_sbin "$applet"; then
+        TARGET_DIR="$INITRAMFS_DIR/sbin"
+        LINK_TARGET="../bin/busybox"
+        SBIN_COUNT=$((SBIN_COUNT + 1))
+    else
+        TARGET_DIR="$INITRAMFS_DIR/bin"
+        LINK_TARGET="busybox"
+        BIN_COUNT=$((BIN_COUNT + 1))
+    fi
+    LINK_PATH="$TARGET_DIR/$applet"
+    if [ -f "$LINK_PATH" ] && [ ! -L "$LINK_PATH" ]; then
+        info "  Keeping real binary: $LINK_PATH"
+        SKIPPED=$((SKIPPED + 1))
+        continue
+    fi
+    ln -sf "$LINK_TARGET" "$LINK_PATH"
+    TOTAL=$((TOTAL + 1))
+done <<< "$APPLET_LIST"
+
+ok "Symlinks created: $TOTAL total  ($BIN_COUNT in bin/,  $SBIN_COUNT in sbin/)"
+[ "$SKIPPED" -gt 0 ] && info "Preserved $SKIPPED existing real binaries"
+
+echo ""
+info "Verifying boot-critical applets..."
+ALL_OK=1
+for applet in $CRITICAL_APPLETS; do
+    FOUND=""
+    for dir in bin sbin usr/bin usr/sbin; do
+        [ -e "$INITRAMFS_DIR/$dir/$applet" ] && FOUND="$dir/$applet" && break
+    done
+    if [ -n "$FOUND" ]; then
+        info "  [✓]  $FOUND"
+    else
+        warn "  [✗]  MISSING: $applet  ← boot failure"
+        ALL_OK=0
+    fi
+done
+[ "$ALL_OK" = "1" ] && ok "All critical applets present" || \
+    warn "One or more critical applets missing — rebuild busybox with those applets enabled"
+
+echo ""
+echo -e "${CYAN}  ── initramfs/bin/ ──────────────────────────────────────${RESET}"
+ls "$INITRAMFS_DIR/bin/" | column
+echo ""
+echo -e "${CYAN}  ── initramfs/sbin/ ─────────────────────────────────────${RESET}"
+ls "$INITRAMFS_DIR/sbin/" | column
+echo ""
+
+# =============================================================
+# STEP 5 — Pack initramfs image
+# =============================================================
+step 5 "Packing initramfs image..."
+
 [ -x "$INITRAMFS_DIR/init" ] || chmod +x "$INITRAMFS_DIR/init"
 
-# Verify busybox is a static binary (required for initramfs)
-if file "$INITRAMFS_DIR/bin/busybox" | grep -q "dynamically"; then
-    warn "busybox appears to be dynamically linked!"
-    warn "initramfs should use a STATIC busybox. Download from busybox.net."
-fi
-
-# Verify switch_root symlink exists in initramfs
-if [ ! -e "$INITRAMFS_DIR/bin/switch_root" ]; then
-    warn "Missing busybox symlink: bin/switch_root — adding it"
-    (cd "$INITRAMFS_DIR/bin" && ln -sf busybox switch_root)
-fi
-
-# Same for losetup (needed to attach loop device in init)
-if [ ! -e "$INITRAMFS_DIR/bin/losetup" ]; then
-    warn "Missing busybox symlink: bin/losetup — adding it"
-    (cd "$INITRAMFS_DIR/bin" && ln -sf busybox losetup)
-fi
-
-# Build the cpio archive
 cd "$INITRAMFS_DIR"
 find . -print0 | cpio --null -ov --format=newc | gzip -9 > "$BOOT_DIR/initramfs.img"
 cd "$PROJECT_DIR"
 
-ok "initramfs built → $BOOT_DIR/initramfs.img ($(du -sh "$BOOT_DIR/initramfs.img" | cut -f1))"
+ok "initramfs packed → $BOOT_DIR/initramfs.img ($(du -sh "$BOOT_DIR/initramfs.img" | cut -f1))"
 
 # =============================================================
-# STEP 5 — Build rootfs image
+# STEP 6 — Build rootfs image
 # =============================================================
-step 5 "Building rootfs.img (requires sudo)..."
+step 6 "Building rootfs.img (requires sudo)..."
 
 if [ "$SKIP_ROOTFS_IMG" = "1" ]; then
-    warn "Skipping rootfs.img creation (--skip-rootfs passed)"
-    if [ ! -f "$BOOT_DIR/rootfs.img" ]; then
-        warn "No existing rootfs.img — ISO will boot to emergency shell only."
-    fi
+    warn "Skipping rootfs.img (--skip-rootfs passed)"
+    [ -f "$BOOT_DIR/rootfs.img" ] || \
+        warn "No existing rootfs.img — ISO will not switch_root"
 else
-    # Check sudo availability
     if ! sudo -n true 2>/dev/null && ! sudo -v 2>/dev/null; then
-        warn "sudo not available. Skipping rootfs.img."
-        warn "To build it manually:"
+        warn "sudo not available — skipping rootfs.img"
+        warn "Build manually:"
         warn "  sudo dd if=/dev/zero of=$BOOT_DIR/rootfs.img bs=1M count=256"
         warn "  sudo mkfs.ext4 -F -L nexos-root $BOOT_DIR/rootfs.img"
         warn "  sudo mount -o loop $BOOT_DIR/rootfs.img $MNT_DIR"
@@ -267,41 +525,35 @@ else
         sudo cp -a "$ROOTFS_DIR/." "$MNT_DIR/"
         sudo umount "$MNT_DIR"
 
-        ok "rootfs.img created → $BOOT_DIR/rootfs.img ($(du -sh "$BOOT_DIR/rootfs.img" | cut -f1))"
+        ok "rootfs.img → $BOOT_DIR/rootfs.img ($(du -sh "$BOOT_DIR/rootfs.img" | cut -f1))"
     fi
 fi
 
 # =============================================================
-# STEP 6 — Build ISO
+# STEP 7 — Build ISO
 # =============================================================
-step 6 "Building ISO..."
+step 7 "Building ISO..."
 
-# ── CRITICAL: Clean the ISO staging dir each time ────────────
-# Without this, re-runs accumulate nested boot/boot/boot/... directories!
 info "Cleaning ISO staging directory..."
 rm -rf "$ISO_DIR"
 mkdir -p "$ISO_DIR/boot/grub/themes/nexos" \
          "$ISO_DIR/boot/grub/fonts"
 
-# ── Stage boot files ─────────────────────────────────────────
 cp "$BOOT_DIR/vmlinuz"       "$ISO_DIR/boot/"
 cp "$BOOT_DIR/initramfs.img" "$ISO_DIR/boot/"
 
-# rootfs.img is optional (boot still works, just stays in initramfs)
 if [ -f "$BOOT_DIR/rootfs.img" ]; then
     cp "$BOOT_DIR/rootfs.img" "$ISO_DIR/boot/"
-    ok "rootfs.img staged into ISO"
+    ok "rootfs.img staged"
 else
-    warn "rootfs.img not found — ISO will not switch_root"
+    warn "rootfs.img not found — switch_root will not work"
 fi
 
-# ── Stage GRUB config ────────────────────────────────────────
 if [ -f "$GRUB_SRC/grub.cfg" ]; then
     cp "$GRUB_SRC/grub.cfg" "$ISO_DIR/boot/grub/"
-    ok "grub.cfg staged from $GRUB_SRC/"
+    ok "grub.cfg staged"
 else
-    # Fallback: generate minimal grub.cfg inline
-    warn "grub/ source directory not found, generating minimal grub.cfg"
+    warn "grub/ not found — generating minimal fallback grub.cfg"
     cat > "$ISO_DIR/boot/grub/grub.cfg" <<'GRUBEOF'
 set timeout=10
 set default=0
@@ -322,42 +574,35 @@ menuentry "NextOS (Verbose)" {
 GRUBEOF
 fi
 
-# ── Stage GRUB theme ─────────────────────────────────────────
 if [ -d "$GRUB_SRC/themes/nexos" ]; then
     cp -r "$GRUB_SRC/themes/nexos/." "$ISO_DIR/boot/grub/themes/nexos/"
     ok "GRUB theme staged"
 else
-    warn "GRUB theme directory not found at $GRUB_SRC/themes/nexos"
-    warn "Create it to enable the custom boot UI"
+    warn "GRUB theme not found at $GRUB_SRC/themes/nexos"
 fi
 
-# ── Stage background image ───────────────────────────────────
 if [ -f "$BANNER_SRC" ]; then
     cp "$BANNER_SRC" "$ISO_DIR/boot/grub/"
-    # Also copy into theme directory if it exists
     [ -d "$ISO_DIR/boot/grub/themes/nexos" ] && \
         cp "$BANNER_SRC" "$ISO_DIR/boot/grub/themes/nexos/"
     ok "Banner image staged"
 else
-    warn "Banner image not found at $BANNER_SRC"
+    warn "Banner not found at $BANNER_SRC"
 fi
 
-# ── Embed GRUB unicode font (for theme text rendering) ────────
 UNICODE_FONT=""
-for f in \
-    /usr/share/grub/unicode.pf2 \
-    /usr/share/grub2/unicode.pf2 \
-    /boot/grub/fonts/unicode.pf2; do
+for f in /usr/share/grub/unicode.pf2 \
+         /usr/share/grub2/unicode.pf2 \
+         /boot/grub/fonts/unicode.pf2; do
     [ -f "$f" ] && UNICODE_FONT="$f" && break
 done
 if [ -n "$UNICODE_FONT" ]; then
     cp "$UNICODE_FONT" "$ISO_DIR/boot/grub/fonts/"
     ok "GRUB unicode font staged"
 else
-    warn "unicode.pf2 not found — install grub-common or grub2-common"
+    warn "unicode.pf2 not found — install grub-common"
 fi
 
-# ── Run grub-mkrescue ────────────────────────────────────────
 info "Running grub-mkrescue..."
 grub-mkrescue \
     --output="$ISO_OUT" \
