@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # =============================================================
 #  NextOS rootfs /sbin/init  — Production v1.0
 #  PID 1 in the real rootfs. Must NEVER exit.
