@@ -303,10 +303,17 @@ fi
 # =============================================================
 step 3 "Populating rootfs..."
 
+ROOTFS_DIR="${ROOTFS_DIR:-./rootfs}"
+
 mkdir -p "$ROOTFS_DIR"/{bin,sbin,lib,lib64,dev,proc,sys,etc,tmp,run,var/log,home/user,root}
 
+# ── Bash ─────────────────────────────────────────────────────
 cp /bin/bash "$ROOTFS_DIR/bin/bash"
 
+# Create /bin/sh -> bash symlink so any #!/bin/sh scripts work
+ln -sf bash "$ROOTFS_DIR/bin/sh"
+
+# Copy bash's shared libraries
 copy_libs() {
     local binary="$1" dest_root="$2"
     ldd "$binary" 2>/dev/null | grep -oP '(/[a-zA-Z0-9_./-]+\.so[.0-9]*)' | sort -u | \
@@ -317,8 +324,7 @@ copy_libs() {
         cp -L "$lib" "$dest_dir/" 2>/dev/null || true
     done
     local interp
-    interp=$(readelf -l "$binary" 2>/dev/null \
-             | grep -oP '\[.+ld[^]]+\]' | tr -d '[]' || true)
+    interp=$(readelf -l "$binary" 2>/dev/null | grep -oP '\[.+ld[^]]+\]' | tr -d '[]' || true)
     if [ -n "$interp" ] && [ -f "$interp" ]; then
         mkdir -p "$dest_root$(dirname "$interp")"
         cp -L "$interp" "$dest_root$(dirname "$interp")/"
@@ -326,29 +332,53 @@ copy_libs() {
 }
 copy_libs /bin/bash "$ROOTFS_DIR"
 
-[ -f "$ROOTFS_DIR/sbin/init" ] || \
-    die "MISSING: rootfs/sbin/init — see docs/BUILD_SYSTEM.md"
-chmod +x "$ROOTFS_DIR/sbin/init"
-ok "/sbin/init present and executable"
+# ── Validate /sbin/init BEFORE building the image ─────────────
+INIT_FILE="$ROOTFS_DIR/sbin/init"
+[ -f "$INIT_FILE" ] || die "MISSING: rootfs/sbin/init"
+chmod +x "$INIT_FILE"
 
-[ -f "$ROOTFS_DIR/etc/passwd" ] || cat > "$ROOTFS_DIR/etc/passwd" <<'EOF'
+# Check shebang — must be bash (sh does not exist in rootfs without symlink)
+SHEBANG=$(head -1 "$INIT_FILE")
+if echo "$SHEBANG" | grep -q '#!/bin/sh$'; then
+    warn "rootfs/sbin/init uses #!/bin/sh — changing to #!/bin/bash"
+    sed -i '1s|#!/bin/sh$|#!/bin/bash|' "$INIT_FILE"
+fi
+
+# Check for CRLF line endings — kills scripts silently on Linux
+if file "$INIT_FILE" | grep -q CRLF; then
+    warn "rootfs/sbin/init has CRLF line endings — converting to LF"
+    sed -i 's/\r//' "$INIT_FILE"
+fi
+
+# Check for busybox-only commands that don't exist in rootfs
+for cmd in setsid cttyhack busybox; do
+    if grep -q "$cmd" "$INIT_FILE"; then
+        warn "rootfs/sbin/init references '$cmd' which is NOT in the rootfs"
+        warn "Remove it — it only exists in the initramfs busybox environment"
+    fi
+done
+
+ok "/sbin/init validated — shebang: $(head -1 "$INIT_FILE")"
+
+# ── /etc files ────────────────────────────────────────────────
+[ -f "$ROOTFS_DIR/etc/passwd" ] || cat > "$ROOTFS_DIR/etc/passwd" <<'ETCEOF'
 root:x:0:0:root:/root:/bin/bash
 user:x:1000:1000:NextOS User:/home/user:/bin/bash
-EOF
+ETCEOF
 
-[ -f "$ROOTFS_DIR/etc/group" ] || cat > "$ROOTFS_DIR/etc/group" <<'EOF'
+[ -f "$ROOTFS_DIR/etc/group" ] || cat > "$ROOTFS_DIR/etc/group" <<'ETCEOF'
 root:x:0:
 user:x:1000:
-EOF
+ETCEOF
 
 [ -f "$ROOTFS_DIR/etc/hostname" ] || echo "nextos" > "$ROOTFS_DIR/etc/hostname"
 
-[ -f "$ROOTFS_DIR/etc/profile" ] || cat > "$ROOTFS_DIR/etc/profile" <<'EOF'
+[ -f "$ROOTFS_DIR/etc/profile" ] || cat > "$ROOTFS_DIR/etc/profile" <<'ETCEOF'
 export PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 export PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
 export HOME=/root
 export TERM=linux
-EOF
+ETCEOF
 
 ok "rootfs populated"
 
