@@ -308,6 +308,10 @@ ROOTFS_DIR="${ROOTFS_DIR:-./rootfs}"
 mkdir -p "$ROOTFS_DIR"/{bin,sbin,lib,lib64,dev,proc,sys,etc,tmp,run,var/log,home/user,root}
 
 # ── Bash ─────────────────────────────────────────────────────
+echo "CHecking current directory..."
+pwd
+sleep 10
+
 cp /bin/bash "$ROOTFS_DIR/bin/bash"
 
 # Create /bin/sh -> bash symlink so any #!/bin/sh scripts work
@@ -338,11 +342,11 @@ INIT_FILE="$ROOTFS_DIR/sbin/init"
 chmod +x "$INIT_FILE"
 
 # Check shebang — must be bash (sh does not exist in rootfs without symlink)
-SHEBANG=$(head -1 "$INIT_FILE")
-if echo "$SHEBANG" | grep -q '#!/bin/sh$'; then
-    warn "rootfs/sbin/init uses #!/bin/sh — changing to #!/bin/bash"
-    sed -i '1s|#!/bin/sh$|#!/bin/bash|' "$INIT_FILE"
-fi
+# SHEBANG=$(head -1 "$INIT_FILE")
+# if echo "$SHEBANG" | grep -q '#!/bin/sh$'; then
+#     warn "rootfs/sbin/init uses #!/bin/sh — changing to #!/bin/bash"
+#     sed -i '1s|#!/bin/sh$|#!/bin/bash|' "$INIT_FILE"
+# fi
 
 # Check for CRLF line endings — kills scripts silently on Linux
 if file "$INIT_FILE" | grep -q CRLF; then
