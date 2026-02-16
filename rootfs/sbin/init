@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # =============================================================
 #  NextOS rootfs /sbin/init  — Production v1.0
 #  PID 1 in the real rootfs. Must NEVER exit.
@@ -24,12 +24,12 @@ hostname -F /etc/hostname 2>/dev/null || hostname nextos
 
 # ── Try Python-based init system ──────────────────────────────
 # Only attempt if python3 is actually present in the rootfs
-if [ -f /system/init.py ] && command -v python3 >/dev/null 2>&1; then
-    echo "[init] Launching Python init system..."
-    exec python3 /system/init.py
-    # exec only returns on failure — fall through to shell below
-    echo "[init] Python init exited! Falling back to shell."
-fi
+# if [ -f /system/init.py ] && command -v python3 >/dev/null 2>&1; then
+#     echo "[init] Launching Python init system..."
+#     exec python3 /system/init.py
+#     # exec only returns on failure — fall through to shell below
+#     echo "[init] Python init exited! Falling back to shell."
+# fi
 
 # ── Fallback: direct shell on console ─────────────────────────
 # This is reached if python3 is missing or /system/init.py failed.

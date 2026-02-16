@@ -208,4 +208,4 @@ echo "    ls /mnt/iso/boot/                        — ISO contents"
 echo "    cat /proc/cmdline                        — boot parameters"
 echo "================================================"
 echo ""
-exec /bin/sh
+exec /bin/bash
