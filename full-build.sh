@@ -505,11 +505,35 @@ done
 
 # =============================================================
 # STEP 5 — Pack initramfs image
+# INSERT this block BEFORE the find/cpio/gzip line
 # =============================================================
-step 5 "Packing initramfs image..."
 
-[ -x "$INITRAMFS_DIR/init" ] || chmod +x "$INITRAMFS_DIR/init"
+# Strip CRLF from all text files in initramfs.
+# A single \r in the /init shebang causes "Failed to execute /init (error -2)"
+# because the kernel looks for "/bin/sh\r" which doesn't exist.
+info "Stripping CRLF line endings from initramfs text files..."
+find "$INITRAMFS_DIR" -maxdepth 3 -type f | while read -r f; do
+    # Only process files that are text (scripts, configs)
+    # Skip the busybox binary itself and any other ELF binaries
+    if file "$f" 2>/dev/null | grep -qvE 'ELF|data|archive|image'; then
+        if grep -qP '\r' "$f" 2>/dev/null; then
+            sed -i 's/\r//' "$f"
+            warn "  Fixed CRLF: $f"
+        fi
+    fi
+done
 
+# Ensure init is executable (cpio preserves permissions, so this matters)
+chmod +x "$INITRAMFS_DIR/init"
+
+# Verify the shebang is clean before packing
+INIT_SHEBANG=$(head -1 "$INITRAMFS_DIR/init" | cat -A)
+if echo "$INIT_SHEBANG" | grep -q '\^M'; then
+    die "initramfs/init still has CRLF after stripping! Check your editor settings."
+fi
+info "initramfs/init shebang OK: $(head -1 "$INITRAMFS_DIR/init")"
+
+# --- existing pack command below (unchanged) ---
 cd "$INITRAMFS_DIR"
 find . -print0 | cpio --null -ov --format=newc | gzip -9 > "$BOOT_DIR/initramfs.img"
 cd "$PROJECT_DIR"
