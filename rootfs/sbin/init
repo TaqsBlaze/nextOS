@@ -1,0 +1,45 @@
+#!/bin/sh
+# =============================================================
+#  NextOS rootfs /sbin/init  — Production v1.0
+#  PID 1 in the real rootfs. Must NEVER exit.
+# =============================================================
+
+export PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+export HOME=/root
+export TERM=linux
+
+# ── Mount essential filesystems ───────────────────────────────
+# switch_root moves /proc /sys /dev — but /run /tmp need mounting
+mount -t proc     proc  /proc  2>/dev/null || true
+mount -t sysfs    sysfs /sys   2>/dev/null || true
+mount -t devtmpfs dev   /dev   2>/dev/null || true
+mount -t tmpfs    tmpfs /run   2>/dev/null
+mount -t tmpfs    tmpfs /tmp   2>/dev/null
+
+chmod 1777 /tmp
+mkdir -p /run/lock
+
+# ── Hostname ──────────────────────────────────────────────────
+hostname -F /etc/hostname 2>/dev/null || hostname nextos
+
+# ── Try Python-based init system ──────────────────────────────
+# Only attempt if python3 is actually present in the rootfs
+if [ -f /system/init.py ] && command -v python3 >/dev/null 2>&1; then
+    echo "[init] Launching Python init system..."
+    exec python3 /system/init.py
+    # exec only returns on failure — fall through to shell below
+    echo "[init] Python init exited! Falling back to shell."
+fi
+
+# ── Fallback: direct shell on console ─────────────────────────
+# This is reached if python3 is missing or /system/init.py failed.
+# setsid + cttyhack is required for proper TTY job control.
+echo "[init] Starting emergency console shell..."
+while true; do
+    setsid cttyhack /bin/bash --login 2>/dev/null || \
+    setsid cttyhack /bin/sh           2>/dev/null || \
+    exec /bin/bash --login            2>/dev/null || \
+    exec /bin/sh
+    echo "[init] Shell exited — restarting in 2 seconds..."
+    sleep 2
+done
