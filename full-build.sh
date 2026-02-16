@@ -254,7 +254,21 @@ else
         --enable  CONFIG_DEVTMPFS            \
         --enable  CONFIG_DEVTMPFS_MOUNT      \
         --enable  CONFIG_FB_VESA             \
-        --enable  CONFIG_FRAMEBUFFER_CONSOLE
+        --enable  CONFIG_FRAMEBUFFER_CONSOLE \
+        --enable  CONFIG_ATA                 \
+        --enable  CONFIG_ATA_PIIX            \
+        --enable  CONFIG_SATA_AHCI           \
+        --enable  CONFIG_BLK_DEV_SR          \
+        --enable  CONFIG_BLK_DEV_SD          \
+        --enable  CONFIG_SCSI                \
+        --enable  CONFIG_SCSI_LOWLEVEL       \
+        --enable  CONFIG_SR_ATTACHED_SETTINGS\
+        --enable  CONFIG_CDROM               \
+        --enable  CONFIG_VIRTIO_BLK          \
+        --enable  CONFIG_VIRTIO_PCI          \
+        --enable  CONFIG_VIRTIO_MMIO         \
+        --enable  CONFIG_PCI                 \
+        --enable  CONFIG_PCI_LEGACY
 
     # Run olddefconfig a second time AFTER scripts/config so the values
     # are locked in before the build — without this, olddefconfig on the
