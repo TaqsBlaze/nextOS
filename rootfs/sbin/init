@@ -1,101 +1,44 @@
 #!/bin/bash
-# =============================================================
-#  NextOS /sbin/init — ROOTFS PID 1
-#
-#  This runs AFTER switch_root completes. It is the actual OS.
-#  
-#  CRITICAL: This file must NEVER exit. If PID 1 exits for any
-#  reason (even exit 0), the kernel panics immediately.
-#
-#  Location: rootfs/sbin/init (inside rootfs.img)
-#  Shebang:  #!/bin/bash (NOT /bin/sh — sh doesn't exist here)
-# =============================================================
-
-# ── Environment ───────────────────────────────────────────────
-export PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
 export HOME=/root
 export TERM=linux
 
 echo ""
-echo "  =============================================="
-echo "   NextOS — Rootfs Init Started"
-echo "   PID $$, Kernel $(uname -r)"
-echo "  =============================================="
+echo "NextOS — Rootfs Init (PID $$)"
+echo "Kernel: $(uname -r)"
 echo ""
 
-# ── Mount runtime filesystems ─────────────────────────────────
-# /proc /sys /dev were moved here by switch_root — don't remount them
-# /run and /tmp need to be mounted fresh as tmpfs
-echo "[init] Mounting /run and /tmp..."
-mount -t tmpfs tmpfs /run 2>/dev/null || {
-    echo "[init] WARNING: /run mount failed"
-}
-mount -t tmpfs tmpfs /tmp 2>/dev/null || {
-    echo "[init] WARNING: /tmp mount failed"
-}
-chmod 1777 /tmp
-mkdir -p /run/lock
+# Mount runtime filesystems
+mount -t tmpfs tmpfs /run 2>/dev/null && echo "Mounted /run"
+mount -t tmpfs tmpfs /tmp 2>/dev/null && echo "Mounted /tmp"
+chmod 1777 /tmp 2>/dev/null
 
-# ── Hostname ──────────────────────────────────────────────────
+# Set hostname
 if [ -f /etc/hostname ]; then
-    HOSTNAME=$(cat /etc/hostname)
-    hostname "$HOSTNAME"
-    echo "[init] Hostname set to: $HOSTNAME"
+    hostname -F /etc/hostname 2>/dev/null
 else
-    hostname nextos
-    echo "[init] Hostname set to: nextos (default)"
+    hostname nextos 2>/dev/null
 fi
 
-# ── Diagnostics ───────────────────────────────────────────────
 echo ""
-echo "[init] System status:"
-echo "  Filesystems mounted:"
-mount | grep -E '^(proc|sysfs|devtmpfs|tmpfs)' || echo "  (none)"
-echo ""
-echo "  Available executables:"
-ls /bin/ 2>/dev/null | head -5
-echo "  ... ($(ls /bin/ 2>/dev/null | wc -l) total)"
+echo "System ready. Available commands:"
+echo "  $(ls /bin | wc -l) binaries in /bin"
+echo "  $(ls /sbin | wc -l) binaries in /sbin"
 echo ""
 
-# ── Try Python-based init system ──────────────────────────────
-# If /system/init.py exists and python3 is available, use it
-if [ -f /system/init.py ]; then
-    echo "[init] Found /system/init.py"
-    if command -v python3 >/dev/null 2>&1; then
-        echo "[init] Python3 detected — launching Python init system..."
-        exec python3 /system/init.py
-        # exec replaces this process — only returns on failure
-        echo "[init] ERROR: Python init exited or failed!"
-        echo "[init] Falling back to shell..."
-        sleep 2
-    else
-        echo "[init] WARNING: /system/init.py exists but python3 not found"
-        echo "[init] Python not in rootfs — skipping Python init"
-    fi
+# Try Python init if exists
+if [ -f /system/init.py ] && command -v python3 >/dev/null 2>&1; then
+    echo "Launching Python init system..."
+    exec python3 /system/init.py
 fi
 
-# ── Shell fallback ────────────────────────────────────────────
-# This MUST run in an infinite loop — PID 1 cannot exit
-echo "[init] Starting interactive shell..."
-echo "[init] (Type 'exit' to restart the shell, NOT to shutdown)"
+# Interactive shell — must never exit (PID 1)
+echo "Starting interactive shell..."
 echo ""
 
 while true; do
-    # Explicitly attach stdin/stdout/stderr to /dev/console
-    # This ensures the shell has a controlling TTY
     /bin/bash --login </dev/console >/dev/console 2>/dev/console
-    
-    # If we get here, the shell exited (user typed 'exit')
-    EXITCODE=$?
     echo ""
-    echo "[init] Shell exited with code $EXITCODE"
-    echo "[init] Restarting shell in 3 seconds..."
-    echo "[init] (To shutdown, type: reboot -f  or  poweroff -f)"
-    echo ""
-    sleep 3
+    echo "Shell exited - restarting in 2s (type 'reboot -f' to shutdown)"
+    sleep 2
 done
-
-# This line should NEVER be reached — the while loop is infinite
-# If somehow we get here, drop into an emergency shell
-echo "[init] FATAL: infinite loop exited — this should be impossible"
-exec /bin/bash </dev/console >/dev/console 2>/dev/console
