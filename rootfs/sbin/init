@@ -1,0 +1,44 @@
+#!/bin/bash
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export HOME=/root
+export TERM=linux
+
+echo ""
+echo "NextOS — Rootfs Init (PID $$)"
+echo "Kernel: $(uname -r)"
+echo ""
+
+# Mount runtime filesystems
+mount -t tmpfs tmpfs /run 2>/dev/null && echo "Mounted /run"
+mount -t tmpfs tmpfs /tmp 2>/dev/null && echo "Mounted /tmp"
+chmod 1777 /tmp 2>/dev/null
+
+# Set hostname
+if [ -f /etc/hostname ]; then
+    hostname -F /etc/hostname 2>/dev/null
+else
+    hostname nextos 2>/dev/null
+fi
+
+echo ""
+echo "System ready. Available commands:"
+echo "  $(ls /bin | wc -l) binaries in /bin"
+echo "  $(ls /sbin | wc -l) binaries in /sbin"
+echo ""
+
+# Try Python init if exists
+if [ -f /system/init.py ] && command -v python3 >/dev/null 2>&1; then
+    echo "Launching Python init system..."
+    exec python3 /system/init.py
+fi
+
+# Interactive shell — must never exit (PID 1)
+echo "Starting interactive shell..."
+echo ""
+
+while true; do
+    /bin/bash --login </dev/console >/dev/console 2>/dev/console
+    echo ""
+    echo "Shell exited - restarting in 2s (type 'reboot -f' to shutdown)"
+    sleep 2
+done

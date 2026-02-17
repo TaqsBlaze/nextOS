@@ -1,6 +1,5 @@
 # Build artifacts
 *.iso
-<<<<<<< HEAD
 *.img
 busybox
 vmlinuz
@@ -50,4 +49,6 @@ __pycache__/
 
 # Test artifacts
 /test_initramfs/
->>>>>>> d336ec61b5b86540d29d1ad2bc8fdb639693e5e9
+
+rootfs/lib/
+startDOcker

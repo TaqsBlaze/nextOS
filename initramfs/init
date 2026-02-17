@@ -1,33 +1,199 @@
 #!/bin/sh
+# =============================================================
+#  NextOS initramfs /init  — v1.2
+#  Fixes: PATH, mdev, losetup -f, VirtualBox hdc/hdd probe
+# =============================================================
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
-echo "NextOS initramfs starting..."
-
-# Create essential directories
-mkdir -p /proc /sys /dev /etc /root /tmp /var/run
-
-# Mount essential filesystems (may already be mounted by kernel)
-[ -e /proc/version ] || mount -t proc proc /proc 2>/dev/null
-[ -e /sys/kernel ] || mount -t sysfs sysfs /sys 2>/dev/null
-[ -e /dev/null ] || mount -t devtmpfs devtmpfs /dev 2>/dev/null || mount -t tmpfs tmpfs /dev 2>/dev/null
-
+# ── 1. Banner ─────────────────────────────────────────────────
 echo ""
-echo "========================================="
-echo "NextOS Initramfs - Ready for interaction"
-echo "========================================="
+echo "  _  _           _    ___  ___"
+echo " | \| |_____ __ | |_ / _ \/ __|"
+echo " | .\` / -_) \ / |  _| (_) \__ \\"
+echo " |_|\_\___/_\_\  \__|\___/|___/"
 echo ""
-echo "Filesystem mounted:"
-mount | grep -E "proc|sys|dev|root"
-echo ""
-echo "Available commands:"
-ls /bin | head -10
-echo ""
-echo "Type 'ls /' to explore, 'exit' to shutdown"
+echo "  NextOS initramfs v1.2 — booting..."
 echo ""
 
-# Try to find a shell
-if [ -x /bin/sh ]; then
-    exec /bin/sh
-else
-    echo "ERROR: No shell found!"
-    panic
+# ── 2. Mount essential virtual filesystems ────────────────────
+mount -t proc     proc     /proc
+mount -t sysfs    sysfs    /sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || \
+    mount -t tmpfs tmpfs   /dev
+
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts 2>/dev/null
+
+# ── 3. Ensure critical device nodes exist ─────────────────────
+[ -e /dev/console ] || mknod /dev/console c 5  1
+[ -e /dev/null    ] || mknod /dev/null    c 1  3
+[ -e /dev/zero    ] || mknod /dev/zero    c 1  5
+[ -e /dev/tty     ] || mknod /dev/tty     c 5  0
+[ -e /dev/tty1    ] || mknod /dev/tty1    c 4  1
+[ -e /dev/random  ] || mknod /dev/random  c 1  8
+[ -e /dev/urandom ] || mknod /dev/urandom c 1  9
+# Loop devices
+for i in 0 1 2 3 4 5 6 7; do
+    [ -e "/dev/loop$i" ] || mknod "/dev/loop$i" b 7 $i
+done
+# IDE CD-ROM nodes — VirtualBox often uses hdc (major 22)
+# sr0 nodes — SCSI/SATA CD-ROM (major 11)
+[ -e /dev/sr0  ] || mknod /dev/sr0  b 11 0
+[ -e /dev/sr1  ] || mknod /dev/sr1  b 11 1
+[ -e /dev/hda  ] || mknod /dev/hda  b  3 0
+[ -e /dev/hdb  ] || mknod /dev/hdb  b  3 64
+[ -e /dev/hdc  ] || mknod /dev/hdc  b 22 0    # VirtualBox IDE secondary master
+[ -e /dev/hdd  ] || mknod /dev/hdd  b 22 64   # VirtualBox IDE secondary slave
+
+# ── 4. Run mdev to populate /dev from sysfs ───────────────────
+mdev -s 2>/dev/null || true
+
+# ── 5. Load storage drivers ───────────────────────────────────
+# Load in order: bus → controller → device → filesystem
+# These are no-ops if compiled =y (built-in), safe either way.
+for mod in \
+    pci ata libata ata_piix ahci \
+    scsi_mod sd_mod sr_mod cdrom \
+    iso9660 loop ext4 squashfs \
+    virtio virtio_pci virtio_blk; do
+    modprobe "$mod" 2>/dev/null || true
+done
+
+# ── 6. Wait for devices to settle ────────────────────────────
+# Poll until sr0 or hdc or sda appears — max 8 seconds
+echo "[init] Waiting for storage devices..."
+SETTLE=0
+until [ $SETTLE -ge 8 ]; do
+    # Re-run mdev each iteration to catch newly-announced devices
+    mdev -s 2>/dev/null || true
+    # Check for any optical or block device
+    for dev in sr0 sr1 hdc hdd sda sdb vda; do
+        [ -b "/dev/$dev" ] && break 2
+    done
+    sleep 1
+    SETTLE=$((SETTLE + 1))
+done
+echo "[init] Devices after settle: $(ls /dev/sr* /dev/hd* /dev/sd* /dev/vd* 2>/dev/null || echo 'none found')"
+
+# ── 7. Parse kernel command line ──────────────────────────────
+ROOTFS_PATH="/boot/rootfs.img"
+ROOT_MOUNT_OPT="rw"
+for arg in $(cat /proc/cmdline); do
+    case "$arg" in
+        nextos.rootfs=*) ROOTFS_PATH="${arg#nextos.rootfs=}" ;;
+        ro|rw)           ROOT_MOUNT_OPT="$arg" ;;
+    esac
+done
+
+echo "[init] Kernel cmdline: $(cat /proc/cmdline)"
+echo "[init] Expecting rootfs at: $ROOTFS_PATH"
+
+# ── 8. Probe all optical + block devices for the boot ISO ─────
+ROOT_MOUNTED=0
+
+# Candidate list — includes both modern (sr0) and legacy VirtualBox (hdc/hdd) names
+CANDIDATES=""
+for dev in sr0 sr1 sr2 hdc hdd hda hdb sda sda1 sdb sdb1 vda vda1; do
+    [ -b "/dev/$dev" ] && CANDIDATES="$CANDIDATES /dev/$dev"
+done
+
+echo "[init] Candidate devices: ${CANDIDATES:-NONE}"
+
+if [ -z "$CANDIDATES" ]; then
+    echo "[init] WARNING: No block devices found!"
+    echo "[init] Full /dev listing:"
+    ls /dev/
 fi
+
+for ISO_DEV in $CANDIDATES; do
+    echo "[init] Trying ISO device: $ISO_DEV"
+
+    if mount -t iso9660 -o ro "$ISO_DEV" /mnt/iso 2>/dev/null; then
+        echo "[init] Mounted ISO from $ISO_DEV"
+        echo "[init] ISO /boot contents: $(ls /mnt/iso/boot/ 2>/dev/null)"
+
+        if [ -f "/mnt/iso${ROOTFS_PATH}" ]; then
+            echo "[init] Found rootfs.img — size: $(ls -lh /mnt/iso${ROOTFS_PATH} | awk '{print $5}')"
+
+            # Use losetup -f to auto-find first free loop device
+            LOOP_DEV=$(losetup -f 2>/dev/null)
+            if [ -z "$LOOP_DEV" ]; then
+                echo "[init] ERROR: No free loop device (losetup -f empty)."
+                umount /mnt/iso 2>/dev/null
+                continue
+            fi
+
+            if losetup "$LOOP_DEV" "/mnt/iso${ROOTFS_PATH}" 2>/dev/null; then
+                echo "[init] Attached rootfs.img → $LOOP_DEV"
+
+                if mount -t ext4 -o rw "$LOOP_DEV" /mnt/root 2>/dev/null; then
+                    echo "[init] Root filesystem mounted OK."
+                    ROOT_MOUNTED=1
+                    break
+                else
+                    echo "[init] ext4 mount failed. Checking image:"
+                    dmesg | tail -5
+                    losetup -d "$LOOP_DEV" 2>/dev/null
+                fi
+            else
+                echo "[init] losetup failed on $LOOP_DEV."
+            fi
+        else
+            echo "[init] rootfs.img NOT found at /mnt/iso${ROOTFS_PATH}"
+            echo "[init] ISO boot dir contents:"
+            ls /mnt/iso/boot/ 2>/dev/null || echo "  (boot/ missing)"
+            ls /mnt/iso/      2>/dev/null
+        fi
+
+        umount /mnt/iso 2>/dev/null
+    else
+        echo "[init] Cannot mount $ISO_DEV as iso9660."
+    fi
+done
+
+# ── 9. Switch root ─────────────────────────────────────────────
+if [ "$ROOT_MOUNTED" = "1" ]; then
+    echo "[init] Switching to root filesystem..."
+
+    TARGET_INIT=""
+    for candidate in /sbin/init /bin/init /init /bin/bash /bin/sh; do
+        [ -x "/mnt/root$candidate" ] && TARGET_INIT="$candidate" && break
+    done
+
+    if [ -z "$TARGET_INIT" ]; then
+        echo "[init] ERROR: No executable init in new root!"
+        ls -la /mnt/root/sbin/ 2>/dev/null
+    else
+        echo "[init] Using init: $TARGET_INIT"
+        mount --move /proc /mnt/root/proc 2>/dev/null || mount -t proc    proc    /mnt/root/proc
+        mount --move /sys  /mnt/root/sys  2>/dev/null || mount -t sysfs   sysfs   /mnt/root/sys
+        mount --move /dev  /mnt/root/dev  2>/dev/null || mount -t devtmpfs devtmpfs /mnt/root/dev
+        exec switch_root /mnt/root "$TARGET_INIT"
+        echo "[init] FATAL: switch_root returned!"
+    fi
+fi
+
+# ── 10. Emergency shell ────────────────────────────────────────
+echo ""
+echo "================================================"
+echo "  NextOS — EMERGENCY SHELL"
+echo ""
+echo "  Root filesystem could NOT be mounted."
+echo ""
+echo "  === Quick diagnostics ==="
+echo "  Block devices found:"
+ls /dev/sr* /dev/hd* /dev/sd* /dev/vd* 2>&1
+echo ""
+echo "  Loop device status:"
+losetup -a 2>/dev/null || echo "  (losetup -a failed)"
+echo ""
+echo "  ISO mount attempt on sr0:"
+mount -t iso9660 /dev/sr0 /mnt/iso 2>&1 && ls /mnt/iso/boot/ 2>&1
+echo "  ISO mount attempt on hdc:"
+mount -t iso9660 /dev/hdc /mnt/iso 2>&1 && ls /mnt/iso/boot/ 2>&1
+echo ""
+echo "  dmesg (storage related):"
+dmesg | grep -iE 'sr0|hdc|ata|scsi|iso|loop|ext4' | tail -15
+echo "================================================"
+echo ""
+exec /bin/sh
