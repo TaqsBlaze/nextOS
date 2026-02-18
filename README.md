@@ -4,9 +4,17 @@
 
 > A minimal, transparent, and performance-focused Linux OS built from source.
 
-[![Build Status](https://github.com/TaqsBlaze/nextOS/actions/workflows/build.yml/badge.svg)](https://github.com/TaqsBlaze/nextOS/actions)
+<!-- [![Build Status](https://github.com/TaqsBlaze/nextOS/actions/workflows/build.yml/badge.svg)](https://github.com/TaqsBlaze/nextOS/actions) -->
 [![License: GPL v2](https://img.shields.io/badge/License-GPLv2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
 [![Linux](https://img.shields.io/badge/Linux-6.19-FCC624?logo=linux&logoColor=black)](https://www.kernel.org/)
+[![Linux](https://img.shields.io/badge/Linux-6.19-FCC624?logo=linux&logoColor=black)](https://www.kernel.org/)
+[![GitHub Stars](https://img.shields.io/github/stars/TaqsBlaze/nextOS?style=social)](https://github.com/TaqsBlaze/nextOS)
+[![GitHub Issues](https://img.shields.io/github/issues/TaqsBlaze/nextOS)](https://github.com/TaqsBlaze/nextOS/issues)
+[![GitHub Forks](https://img.shields.io/github/forks/TaqsBlaze/nextOS?style=social)](https://github.com/TaqsBlaze/nextOS)
+[![GitHub Last Commit](https://img.shields.io/github/last-commit/TaqsBlaze/nextOS)](https://github.com/TaqsBlaze/nextOS/commits/main)
+[![GitHub Contributors](https://img.shields.io/github/contributors/TaqsBlaze/nextOS)](https://github.com/TaqsBlaze/nextOS/graphs/contributors)
+[![GitHub Code Size](https://img.shields.io/github/languages/code-size/TaqsBlaze/nextOS)](https://github.com/TaqsBlaze/nextOS)
+[![GitHub Repo Size](https://img.shields.io/github/repo-size/TaqsBlaze/nextOS)](https://github.com/TaqsBlaze/nextOS)
 
 ---
 
