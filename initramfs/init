@@ -54,7 +54,7 @@ mdev -s 2>/dev/null || true
 for mod in \
     pci ata libata ata_piix ahci \
     scsi_mod sd_mod sr_mod cdrom \
-    iso9660 loop ext4 squashfs \
+    iso9660 loop ext4 squashfs overlay \
     virtio virtio_pci virtio_blk; do
     modprobe "$mod" 2>/dev/null || true
 done
@@ -88,8 +88,24 @@ done
 echo "[init] Kernel cmdline: $(cat /proc/cmdline)"
 echo "[init] Expecting rootfs at: $ROOTFS_PATH"
 
-# ── 8. Probe all optical + block devices for the boot ISO ─────
+# ── 8. Prefer persistent disk rootfs (sda1) ───────────────────
 ROOT_MOUNTED=0
+if [ -b /dev/sda1 ]; then
+    echo "[init] Found /dev/sda1 — trying persistent rootfs..."
+    mkdir -p /mnt/root
+    if mount -t ext4 -o rw /dev/sda1 /mnt/root 2>/dev/null; then
+        echo "[init] Persistent rootfs mounted from /dev/sda1"
+        ROOT_MOUNTED=1
+    else
+        echo "[init] Failed to mount /dev/sda1 as ext4."
+        umount /mnt/root 2>/dev/null || true
+    fi
+fi
+
+# ── 9. Probe all optical + block devices for the boot ISO ─────
+if [ "$ROOT_MOUNTED" = "1" ]; then
+    echo "[init] Skipping ISO probe — persistent rootfs active."
+fi
 
 # Candidate list — includes both modern (sr0) and legacy VirtualBox (hdc/hdd) names
 CANDIDATES=""
@@ -106,6 +122,7 @@ if [ -z "$CANDIDATES" ]; then
 fi
 
 for ISO_DEV in $CANDIDATES; do
+    [ "$ROOT_MOUNTED" = "1" ] && break
     echo "[init] Trying ISO device: $ISO_DEV"
 
     if mount -t iso9660 -o ro "$ISO_DEV" /mnt/iso 2>/dev/null; then
@@ -126,14 +143,49 @@ for ISO_DEV in $CANDIDATES; do
             if losetup "$LOOP_DEV" "/mnt/iso${ROOTFS_PATH}" 2>/dev/null; then
                 echo "[init] Attached rootfs.img → $LOOP_DEV"
 
-                if mount -t ext4 -o rw "$LOOP_DEV" /mnt/root 2>/dev/null; then
-                    echo "[init] Root filesystem mounted OK."
+                mkdir -p /mnt/root /mnt/root-ro /mnt/overlay/upper /mnt/overlay/work
+
+                # Mount tmpfs for overlay
+                if ! mount -t tmpfs tmpfs /mnt/overlay; then
+                    echo "[init] ERROR: Cannot mount tmpfs for overlay!"
+                    losetup -d "$LOOP_DEV" 2>/dev/null
+                    continue
+                fi
+                echo "[init] tmpfs mounted for overlay upper/work"
+
+                # Mount lower layer (read-only rootfs)
+                if ! mount -t ext4 -o ro "$LOOP_DEV" /mnt/root-ro; then
+                    echo "[init] ERROR: Cannot mount rootfs.img as lower layer!"
+                    umount /mnt/overlay 2>/dev/null
+                    losetup -d "$LOOP_DEV" 2>/dev/null
+                    continue
+                fi
+                echo "[init] Read-only lower layer mounted"
+
+                # Try overlay mount — this MUST succeed for writable rootfs
+                OVERLAY_ERR=$( { mount -t overlay overlay \
+                    -o lowerdir=/mnt/root-ro,upperdir=/mnt/overlay/upper,workdir=/mnt/overlay/work \
+                    /mnt/root; } 2>&1 )
+                
+                if [ $? -eq 0 ]; then
+                    echo "[init] ✓ Overlay writable mount successful!"
                     ROOT_MOUNTED=1
                     break
                 else
-                    echo "[init] ext4 mount failed. Checking image:"
-                    dmesg | tail -5
-                    losetup -d "$LOOP_DEV" 2>/dev/null
+                    echo "[init] ✗ Overlay mount failed: $OVERLAY_ERR"
+                    echo "[init] Trying direct read-write mount as fallback..."
+                    umount /mnt/root-ro 2>/dev/null
+                    umount /mnt/overlay 2>/dev/null
+                    
+                    if mount -t ext4 -o rw "$LOOP_DEV" /mnt/root 2>/dev/null; then
+                        echo "[init] WARNING: Mounted read-write directly (no overlay protection)"
+                        ROOT_MOUNTED=1
+                        break
+                    else
+                        echo "[init] Direct RW mount also failed. Journal recovery issue:"
+                        dmesg | tail -5
+                        losetup -d "$LOOP_DEV" 2>/dev/null
+                    fi
                 fi
             else
                 echo "[init] losetup failed on $LOOP_DEV."
