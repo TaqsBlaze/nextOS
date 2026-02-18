@@ -457,7 +457,7 @@ if find "$INITRAMFS_DIR/mnt" -mindepth 1 -not -type d 2>/dev/null | grep -q .; t
     ok "Stale files removed from initramfs/mnt/"
 fi
 
-is_sbin() { echo "$SBIN_APPLETS" | grep -qw "$1"; }
+is_sbin() { echo "$SBIN_APPLETS" | grep -Fqw -- "$1"; }
 
 info "Querying busybox --list..."
 APPLET_LIST=$("$BUSYBOX_BIN" --list 2>/dev/null) || \

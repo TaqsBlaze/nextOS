@@ -57,6 +57,13 @@ else
         sudo cp -a "$ROOTFS_DIR/." "$MNT_DIR/"
         sudo umount "$MNT_DIR"
 
+        # Ensure rootfs.img is clean and journal-free for ISO boot
+        info "Running e2fsck on rootfs.img..."
+        sudo e2fsck -fy "$BOOT_DIR/rootfs.img"
+        info "Removing ext4 journal for read-only ISO boot..."
+        sudo tune2fs -O ^has_journal "$BOOT_DIR/rootfs.img"
+        sudo e2fsck -fy "$BOOT_DIR/rootfs.img"
+
         ok "rootfs.img → $BOOT_DIR/rootfs.img ($(du -sh "$BOOT_DIR/rootfs.img" | cut -f1))"
     fi
 fi
