@@ -1,0 +1,112 @@
+#!/bin/sh
+# NextOS Package Manager (npkg) - Simple package management tool
+
+PKGDB="/var/lib/npkg"
+CACHE="/var/cache/npkg"
+VERSION="0.1.0"
+
+usage() {
+    cat <<EOF
+NextOS Package Manager v$VERSION
+
+Usage: npkg <command> [options]
+
+Commands:
+  install <package>   Install a package
+  remove <package>    Remove a package
+  list                List installed packages
+  search <name>       Search for packages
+  update              Update package database
+  info <package>      Show package information
+  help                Show this help message
+
+Examples:
+  npkg install nginx
+  npkg list
+  npkg remove nginx
+EOF
+}
+
+init_dirs() {
+    mkdir -p "$PKGDB/installed"
+    mkdir -p "$CACHE/archives"
+}
+
+list_packages() {
+    echo "Installed packages:"
+    if [ -d "$PKGDB/installed" ]; then
+        ls -1 "$PKGDB/installed" 2>/dev/null || echo "  (none)"
+    else
+        echo "  (none)"
+    fi
+}
+
+package_info() {
+    local pkg="$1"
+    if [ -f "$PKGDB/installed/$pkg" ]; then
+        echo "Package: $pkg"
+        cat "$PKGDB/installed/$pkg"
+    else
+        echo "Package '$pkg' is not installed"
+        return 1
+    fi
+}
+
+install_package() {
+    local pkg="$1"
+    echo "Installing $pkg..."
+    echo "Note: Package installation requires connection to a repository"
+    echo "This is a placeholder - full implementation coming soon"
+    
+    # Record installation
+    init_dirs
+    date > "$PKGDB/installed/$pkg"
+    echo "Package: $pkg" >> "$PKGDB/installed/$pkg"
+    echo "Status: installed" >> "$PKGDB/installed/$pkg"
+    echo "✓ Package $pkg marked as installed"
+}
+
+remove_package() {
+    local pkg="$1"
+    if [ -f "$PKGDB/installed/$pkg" ]; then
+        echo "Removing $pkg..."
+        rm "$PKGDB/installed/$pkg"
+        echo "✓ Package $pkg removed"
+    else
+        echo "Package '$pkg' is not installed"
+        return 1
+    fi
+}
+
+case "$1" in
+    install)
+        [ -z "$2" ] && echo "Error: Package name required" && exit 1
+        install_package "$2"
+        ;;
+    remove)
+        [ -z "$2" ] && echo "Error: Package name required" && exit 1
+        remove_package "$2"
+        ;;
+    list)
+        list_packages
+        ;;
+    info)
+        [ -z "$2" ] && echo "Error: Package name required" && exit 1
+        package_info "$2"
+        ;;
+    update)
+        echo "Updating package database..."
+        echo "Not yet implemented"
+        ;;
+    search)
+        echo "Searching for: $2"
+        echo "Not yet implemented"
+        ;;
+    help|--help|-h)
+        usage
+        ;;
+    *)
+        usage
+        exit 1
+        ;;
+esac

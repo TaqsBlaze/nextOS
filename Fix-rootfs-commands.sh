@@ -107,7 +107,7 @@ while IFS= read -r applet; do
     [ -z "$applet" ] && continue
     
     # Determine target directory
-    if echo "$SBIN_APPLETS" | grep -qw "$applet"; then
+    if echo "$SBIN_APPLETS" | grep -Fqw -- "$applet"; then
         TARGET_DIR="rootfs/sbin"
         LINK_TARGET="../bin/busybox"
         TARGET_PATH="$TARGET_DIR/$applet"
